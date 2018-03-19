@@ -66,8 +66,8 @@ type BlockchainReactor struct {
 	hsm *pseudohsm.HSM
 	// mining     *cpuminer.CPUMiner
 	// miningPool *miningpool.MiningPool
-	mux     *http.ServeMux
-	sw      *p2p.Switch
+	mux *http.ServeMux
+	// sw      *p2p.Switch
 	handler http.Handler
 	evsw    types.EventSwitch
 	// miningEnable bool
@@ -137,7 +137,7 @@ type page struct {
 }
 
 // NewBlockchainReactor returns the reactor of whole blockchain.
-func NewBlockchainReactor(chain *protocol.Chain, accounts *account.Manager, assets *asset.Registry, sw *p2p.Switch, hsm *pseudohsm.HSM, wallet *wallet.Wallet, txfeeds *txfeed.Tracker, accessTokens *accesstoken.CredentialStore) *BlockchainReactor {
+func NewBlockchainReactor(chain *protocol.Chain, accounts *account.Manager, assets *asset.Registry, hsm *pseudohsm.HSM, wallet *wallet.Wallet, txfeeds *txfeed.Tracker, accessTokens *accesstoken.CredentialStore) *BlockchainReactor {
 	bcr := &BlockchainReactor{
 		chain:    chain,
 		wallet:   wallet,
@@ -147,8 +147,8 @@ func NewBlockchainReactor(chain *protocol.Chain, accounts *account.Manager, asse
 		// txPool:        txPool,
 		// mining:        cpuminer.NewCPUMiner(chain, accounts, txPool),
 		// miningPool:    miningpool.NewMiningPool(chain, accounts, txPool),
-		mux:           http.NewServeMux(),
-		sw:            sw,
+		mux: http.NewServeMux(),
+		// sw:            sw,
 		hsm:           hsm,
 		txFeedTracker: txfeeds,
 		accessTokens:  accessTokens,

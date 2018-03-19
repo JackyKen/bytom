@@ -19,10 +19,10 @@ func (bcr *BlockchainReactor) getNetInfo() Response {
 		HighestBlock uint64 `json:"highest_block"`
 	}
 	net := &netInfo{}
-	net.Listening = bcr.sw.IsListening()
+	// net.Listening = bcr.sw.IsListening()
 	// net.Syncing = bcr.blockKeeper.IsCaughtUp()
 	// net.Mining = bcr.mining.IsMining()
-	net.PeerCount = len(bcr.sw.Peers().List())
+	// net.PeerCount = len(bcr.sw.Peers().List())
 	// net.CurrentBlock = bcr.blockKeeper.chainHeight
 	// net.HighestBlock = bcr.blockKeeper.maxPeerHeight
 
