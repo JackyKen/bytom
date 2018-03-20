@@ -5,14 +5,18 @@ import (
 	"io"
 	"net"
 	"time"
-
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	crypto "github.com/tendermint/go-crypto"
 	wire "github.com/tendermint/go-wire"
 	cmn "github.com/tendermint/tmlibs/common"
+	"gopkg.in/fatih/set.v0"
 
 	cfg "github.com/bytom/config"
+)
+
+const (
+	maxKnownTxs = 32768
 )
 
 // Peer could be marked as persistent, in which case you can use
@@ -34,6 +38,9 @@ type Peer struct {
 	*NodeInfo
 	Key  string
 	Data *cmn.CMap // User data.
+
+	knownTxs    *set.Set // Set of transaction hashes known to be known by this peer
+	knownBlocks *set.Set // Set of block hashes known to be known by this peer
 }
 
 // PeerConfig is a Peer configuration.
@@ -114,6 +121,8 @@ func newPeerFromConnAndConfig(rawConn net.Conn, outbound bool, reactorsByCh map[
 		conn:     conn,
 		config:   config,
 		Data:     cmn.NewCMap(),
+		knownTxs:    set.New(),
+		knownBlocks: set.New(),
 	}
 
 	p.mconn = createMConnection(conn, p, reactorsByCh, chDescs, onPeerError, config.MConfig)
@@ -307,4 +316,14 @@ func createMConnection(conn net.Conn, p *Peer, reactorsByCh map[byte]Reactor, ch
 	}
 
 	return NewMConnectionWithConfig(conn, chDescs, onReceive, onError, config)
+}
+
+// MarkTransaction marks a transaction as known for the peer, ensuring that it
+// will never be propagated to this particular peer.
+func (p *Peer) MarkTransaction(hash [32]byte) {
+	// If we reached the memory allowance, drop a previously known transaction hash
+	for p.knownTxs.Size() >= maxKnownTxs {
+		p.knownTxs.Pop()
+	}
+	p.knownTxs.Add(hash)
 }

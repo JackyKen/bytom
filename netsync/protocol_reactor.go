@@ -26,7 +26,7 @@ import (
 
 const (
 	// BlockchainChannel is a channel for blocks and status updates
-	BlockchainChannel = byte(0x41)
+	BlockchainChannel = byte(0x40)
 
 	defaultChannelCapacity      = 100
 	trySyncIntervalMS           = 100
@@ -243,6 +243,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 
 	case *TransactionNotifyMessage:
 		tx := msg.GetTransaction()
+		src.MarkTransaction(tx.ID.Byte32())
 		if err := pr.chain.ValidateTx(tx); err != nil {
 			pr.sw.AddScamPeer(src)
 		}
@@ -257,13 +258,9 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 // (Except for the SYNC_LOOP, which is the primary purpose and must be synchronous.)
 func (pr *ProtocalReactor) syncRoutine() {
 	statusUpdateTicker := time.NewTicker(statusUpdateIntervalSeconds * time.Second)
-	newTxCh := pr.txPool.GetNewTxCh()
 
 	for {
 		select {
-		case newTx := <-newTxCh:
-			pr.txFeedTracker.TxFilter(newTx)
-			go pr.BroadcastTransaction(newTx)
 		case _ = <-statusUpdateTicker.C:
 			go pr.BroadcastStatusResponse()
 

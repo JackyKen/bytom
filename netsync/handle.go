@@ -35,7 +35,7 @@ type SyncManager struct {
 	txPool   *core.TxPool
 	// downloader *downloader.Downloader
 	// fetcher    *fetcher.Fetcher
-	peers *peerSet
+	//peers *peerSet
 
 	// SubProtocols []p2p.Protocol
 
@@ -85,7 +85,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 		sw:       sw,
 		addrBook: addrBook,
 
-		peers:       newPeerSet(),
+		//peers:       newPeerSet(),
 		newPeerCh:   make(chan *peer),
 		noMorePeers: make(chan struct{}),
 		// txsyncCh:    make(chan *txsync),
@@ -195,16 +195,15 @@ func (self *SyncManager) txBroadcastLoop() {
 	}
 }
 
-// BroadcastTx will propagate a transaction to all peers which are not known to
-// already have the given transaction.
-func (self *SyncManager) BroadcastTx(tx *legacy.Tx) {
-	// Broadcast transaction to a batch of peers not knowing about it
-	peers := self.peers.PeersWithoutTx(tx.ID.Byte32())
-	//FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
-	for _, peer := range peers {
-		peer.SendTransaction(tx)
+// BroadcastTransaction broadcats `BlockStore` transaction.
+func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
+	msg, err := NewTransactionNotifyMessage(tx)
+	if err != nil {
+		return err
 	}
-	// log.Trace("Broadcast transaction", "hash", hash, "recipients", len(peers))
+	peers := self.sw.Peers().PeersWithoutTx(tx.ID.Byte32())
+	self.sw.BroadcastX(BlockchainChannel,peers, struct{ BlockchainMessage }{msg})
+	return nil
 }
 
 func (self *SyncManager) NodeInfo() *p2p.NodeInfo {

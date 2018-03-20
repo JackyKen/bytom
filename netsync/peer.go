@@ -20,17 +20,9 @@ const (
 )
 
 type peer struct {
-	id string
+	//id string
 
 	*p2p.Peer
-	// rw p2p.MsgReadWriter
-
-	version  int         // Protocol version negotiated
-	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
-
-	head   common.Hash
-	height uint64
-	lock   sync.RWMutex
 
 	knownTxs    *set.Set // Set of transaction hashes known to be known by this peer
 	knownBlocks *set.Set // Set of block hashes known to be known by this peer
@@ -68,7 +60,7 @@ func (p *peer) MarkTransaction(hash common.Hash) {
 type peerSet struct {
 	peers  map[string]*peer
 	lock   sync.RWMutex
-	closed bool
+	//closed bool
 }
 
 // newPeerSet creates a new peer set to track the active participants.

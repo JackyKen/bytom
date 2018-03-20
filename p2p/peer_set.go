@@ -111,3 +111,15 @@ func (ps *PeerSet) List() []*Peer {
 	defer ps.mtx.Unlock()
 	return ps.list
 }
+
+// PeersWithoutTx retrieves a list of peers that do not have a given transaction
+// in their set of known hashes.
+func (ps *PeerSet) PeersWithoutTx(hash [32]byte) []*Peer {
+	list := make([]*Peer, 0, ps.Size())
+	for _, p := range ps.List() {
+		if !p.knownTxs.Has(hash) {
+			list = append(list, p)
+		}
+	}
+	return list
+}
