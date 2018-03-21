@@ -80,7 +80,7 @@ func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
 		pendingProcessCh: make(chan *pendingResponse),
 	}
 	go bk.blockProcessWorker()
-	go bk.blockRequestWorker()
+	//go bk.blockRequestWorker()
 	return bk
 }
 

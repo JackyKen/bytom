@@ -22,7 +22,8 @@ var (
 	maxNewTxNum     = 10000
 	// ErrTransactionNotExist is the pre-defined error message
 	ErrTransactionNotExist = errors.New("transaction are not existed in the mempool")
-	ErrPoolIsFull          = errors.New("transaction pool reach the max number")
+	// ErrPoolIsFull indicates the pool is full
+	ErrPoolIsFull = errors.New("transaction pool reach the max number")
 )
 
 // TxDesc store tx and related info for mining strategy

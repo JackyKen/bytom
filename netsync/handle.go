@@ -3,20 +3,26 @@ package netsync
 import (
 	"strings"
 	"sync"
+	"time"
 
+	log "github.com/sirupsen/logrus"
 	dbm "github.com/tendermint/tmlibs/db"
 
 	"github.com/bytom/blockchain/account"
 	cfg "github.com/bytom/config"
+	"github.com/bytom/netsync/fetcher"
 	"github.com/bytom/p2p"
 	"github.com/bytom/protocol"
 	core "github.com/bytom/protocol"
+	"github.com/bytom/protocol/bc"
 	"github.com/bytom/protocol/bc/legacy"
 	"github.com/bytom/version"
-	crypto "github.com/tendermint/go-crypto"
-	wire "github.com/tendermint/go-wire"
+	"github.com/tendermint/go-crypto"
+	"github.com/tendermint/go-wire"
 	cmn "github.com/tendermint/tmlibs/common"
 )
+
+const forceSyncCycle = 10 * time.Hour // Time interval to force syncs, even if few peers are available
 
 type SyncManager struct {
 	networkId uint64
@@ -34,7 +40,7 @@ type SyncManager struct {
 	chain    *core.Chain
 	txPool   *core.TxPool
 	// downloader *downloader.Downloader
-	// fetcher    *fetcher.Fetcher
+	fetcher *fetcher.Fetcher
 	//peers *peerSet
 
 	// SubProtocols []p2p.Protocol
@@ -43,6 +49,7 @@ type SyncManager struct {
 	// txCh          chan core.TxPreEvent
 	// txSub         event.Subscription
 	// minedBlockSub *event.TypeMuxSubscription
+	newBlockCh chan *bc.Hash
 
 	// channels for fetcher, syncer, txsyncLoop
 	newPeerCh chan *peer
@@ -58,39 +65,62 @@ type SyncManager struct {
 // NewProtocolManager returns a new ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
 // with the ethereum network.
 func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.TxPool, accounts *account.Manager, miningEnable bool) (*SyncManager, error) {
-	trustHistoryDB := dbm.NewDB("trusthistory", config.DBBackend, config.DBDir())
-
-	sw := p2p.NewSwitch(config.P2P, trustHistoryDB)
-
-	protocolReactor := NewProtocalReactor(chain, txPool, accounts, sw, config.Mining)
-
-	sw.AddReactor("PROTOCOL", protocolReactor)
-	// Optionally, start the pex reactor
-	var addrBook *p2p.AddrBook
-	if config.P2P.PexReactor {
-		addrBook = p2p.NewAddrBook(config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
-		pexReactor := p2p.NewPEXReactor(addrBook)
-		sw.AddReactor("PEX", pexReactor)
-	}
 	// privKey := crypto.GenPrivKeyEd25519()
 	// Create the protocol manager with the base fields
 	manager := &SyncManager{
 		// networkId: networkId,
 		// eventMux:    mux,
 		txPool: txPool,
-		// blockchain:  blockchain,
+		chain:  chain,
 		// chainconfig: config,
-		privKey:  crypto.GenPrivKeyEd25519(),
-		config:   config,
-		sw:       sw,
-		addrBook: addrBook,
-
+		privKey: crypto.GenPrivKeyEd25519(),
+		config:  config,
+		//sw:         sw,
+		//addrBook:   addrBook,
+		//newBlockCh: newBlockCh,
+		//fetcher:    fetcher,
 		//peers:       newPeerSet(),
 		newPeerCh:   make(chan *peer),
 		noMorePeers: make(chan struct{}),
 		// txsyncCh:    make(chan *txsync),
 		quitSync: make(chan struct{}),
 	}
+
+	//validator := func(header *types.Header) error {
+	//	return engine.VerifyHeader(blockchain, header, true)
+	//}
+	heighter := func() uint64 {
+		return chain.Height()
+	}
+	inserter := func(block *legacy.Block) (bool, error) {
+		//// If fast sync is running, deny importing weird blocks
+		//if atomic.LoadUint32(&manager.fastSync) == 1 {
+		//	log.Warn("Discarded bad propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
+		//	return 0, nil
+		//}
+		//atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
+		return manager.chain.ProcessBlock(block)
+	}
+
+	manager.fetcher = fetcher.New(chain.GetBlockByHash, manager.BroadcastMineBlock, heighter, inserter, manager.removePeer)
+
+	manager.newBlockCh = make(chan *bc.Hash, maxNewBlockChSize)
+
+	trustHistoryDB := dbm.NewDB("trusthistory", config.DBBackend, config.DBDir())
+
+	manager.sw = p2p.NewSwitch(config.P2P, trustHistoryDB)
+
+	protocolReactor := NewProtocalReactor(chain, txPool, accounts, manager.sw, config.Mining, manager.newBlockCh, manager.fetcher)
+
+	manager.sw.AddReactor("PROTOCOL", protocolReactor)
+	// Optionally, start the pex reactor
+	//var addrBook *p2p.AddrBook
+	if config.P2P.PexReactor {
+		manager.addrBook = p2p.NewAddrBook(config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
+		pexReactor := p2p.NewPEXReactor(manager.addrBook)
+		manager.sw.AddReactor("PEX", pexReactor)
+	}
+
 	return manager, nil
 }
 
@@ -171,10 +201,10 @@ func (self *SyncManager) Start(maxPeers int) {
 
 	// // broadcast mined blocks
 	// self.minedBlockSub = self.eventMux.Subscribe(core.NewMinedBlockEvent{})
-	// go self.minedBroadcastLoop()
+	go self.minedBroadcastLoop()
 
 	// // start sync handlers
-	// go self.syncer()
+	go self.syncer()
 	// go self.txsyncLoop()
 }
 
@@ -186,13 +216,58 @@ func (self *SyncManager) txBroadcastLoop() {
 		case newTx := <-newTxCh:
 			self.BroadcastTx(newTx)
 
-		// // Err() channel will be closed when unsubscribing.
-		// case <-self.txSub.Err():
-		// 	return
 		case <-self.quitSync:
 			return
 		}
 	}
+}
+
+func (self *SyncManager) minedBroadcastLoop() {
+	for {
+		select {
+		case blockHash := <-self.newBlockCh:
+			//fmt.Println(blockHash)
+			block, err := self.chain.GetBlockByHash(blockHash)
+			if err != nil {
+				log.Errorf("Error get block from newBlockCh %v", err)
+			}
+			//log.WithFields(log.Fields{"Hash": blockHash, "height": block.Height}).Info("Boardcast my new block")
+			self.BroadcastMineBlock(block)
+		case <-self.quitSync:
+			return
+		}
+	}
+}
+
+// syncer is responsible for periodically synchronising with the network, both
+// downloading hashes and blocks as well as handling the announcement handler.
+func (self *SyncManager) syncer() {
+	// Start and ensure cleanup of sync mechanisms
+	self.fetcher.Start()
+	//defer self.fetcher.Stop()
+	//defer pm.downloader.Terminate()
+
+	// Wait for different events to fire synchronisation operations
+	//forceSync := time.NewTicker(forceSyncCycle)
+	//defer forceSync.Stop()
+	//
+	//for {
+	//	select {
+	//	//case <-pm.newPeerCh:
+	//	//	// Make sure we have peers to select from, then sync
+	//	//	if pm.peers.Len() < minDesiredPeerCount {
+	//	//		break
+	//	//	}
+	//	//	go pm.synchronise(pm.peers.BestPeer())
+	//
+	//	case <-forceSync.C:
+	//		// Force a sync even if not enough peers are present
+	//		//go self.synchronise(pm.peers.BestPeer())
+	//		return
+	//		//case <-pm.noMorePeers:
+	//		//	return
+	//	}
+	//}
 }
 
 // BroadcastTransaction broadcats `BlockStore` transaction.
@@ -202,8 +277,50 @@ func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
 		return err
 	}
 	peers := self.sw.Peers().PeersWithoutTx(tx.ID.Byte32())
-	self.sw.BroadcastX(BlockchainChannel,peers, struct{ BlockchainMessage }{msg})
+	self.sw.BroadcastX(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 	return nil
+}
+
+// BroadcastBlock will either propagate a block to a subset of it's peers, or
+// will only announce it's availability (depending what's requested).
+func (self *SyncManager) BroadcastMineBlock(block *legacy.Block) {
+	hash := block.Hash().Byte32()
+	peers := self.sw.Peers().PeersWithoutBlock(hash)
+
+	msg, _ := NewMineBlockMessage(block)
+	//if err != nil {
+	//	return err
+	//}
+	// If propagation is requested, send to a subset of the peer
+	//if propagate {
+	// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
+	//var td *big.Int
+	//if parent := pm.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
+	//	td = new(big.Int).Add(block.Difficulty(), pm.blockchain.GetTd(block.ParentHash(), block.NumberU64()-1))
+	//} else {
+	//	log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
+	//	return
+	//}
+	// Send the block to a subset of our peers
+	//transfer := peers[:int(math.Sqrt(float64(len(peers))))]
+	self.sw.BroadcastX(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
+
+	//for _, peer := range transfer {
+	//		peer.SendNewBlock(block, td)
+	//	}
+
+	//log.WithFields(log.Fields{"Hash": block.Hash().String(), "height": block.Height}).Info("Boardcast my new block")
+
+	//log.Trace("Propagated block", "hash", hash, "recipients", len(transfer), "duration", common.PrettyDuration(time.Since(block.ReceivedAt)))
+	//return nil
+	//}
+	//// Otherwise if the block is indeed in out own chain, announce it
+	//if pm.blockchain.HasBlock(hash, block.NumberU64()) {
+	//	for _, peer := range peers {
+	//		peer.SendNewBlockHashes([]common.Hash{hash}, []uint64{block.NumberU64()})
+	//	}
+	//	log.Trace("Announced block", "hash", hash, "recipients", len(peers), "duration", common.PrettyDuration(time.Since(block.ReceivedAt)))
+	//}
 }
 
 func (self *SyncManager) NodeInfo() *p2p.NodeInfo {
@@ -228,4 +345,32 @@ func (self *SyncManager) AddListener(l p2p.Listener) {
 
 func (self *SyncManager) Switch() *p2p.Switch {
 	return self.sw
+}
+
+func (self *SyncManager) removePeer(id string) {
+	// Short circuit if the peer was already removed
+	peers := self.sw.Peers()
+	if peers == nil {
+		return
+	}
+
+	peer := peers.Get(id)
+	if peer == nil {
+		return
+	}
+
+	peers.Remove(peer)
+	log.Debug("Removing bytom peer", "peer", id)
+
+	// Unregister the peer from the downloader and Ethereum peer set
+	//pm.downloader.UnregisterPeer(id)
+	//if err := pm.peers.Unregister(id); err != nil {
+	//	log.Error("Peer removal failed", "peer", id, "err", err)
+	//}
+	// Hard disconnect at the networking layer
+	//TODO
+	if peer != nil {
+		//peer.Peer.Disconnect(p2p.DiscUselessPeer)
+		peer.CloseConn()
+	}
 }

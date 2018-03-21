@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"time"
+
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	crypto "github.com/tendermint/go-crypto"
@@ -16,7 +17,8 @@ import (
 )
 
 const (
-	maxKnownTxs = 32768
+	maxKnownTxs    = 32768
+	maxKnownBlocks = 1024 // Maximum block hashes to keep in the known list (prevent DOS)
 )
 
 // Peer could be marked as persistent, in which case you can use
@@ -62,7 +64,7 @@ func DefaultPeerConfig(config *cfg.P2PConfig) *PeerConfig {
 	return &PeerConfig{
 		AuthEnc:          true,
 		HandshakeTimeout: time.Duration(config.HandshakeTimeout), // * time.Second,
-		DialTimeout:      time.Duration(config.DialTimeout),  // * time.Second,
+		DialTimeout:      time.Duration(config.DialTimeout),      // * time.Second,
 		MConfig:          DefaultMConnConfig(),
 		Fuzz:             false,
 		FuzzConfig:       DefaultFuzzConnConfig(),
@@ -117,10 +119,10 @@ func newPeerFromConnAndConfig(rawConn net.Conn, outbound bool, reactorsByCh map[
 
 	// Key and NodeInfo are set after Handshake
 	p := &Peer{
-		outbound: outbound,
-		conn:     conn,
-		config:   config,
-		Data:     cmn.NewCMap(),
+		outbound:    outbound,
+		conn:        conn,
+		config:      config,
+		Data:        cmn.NewCMap(),
 		knownTxs:    set.New(),
 		knownBlocks: set.New(),
 	}
@@ -326,4 +328,14 @@ func (p *Peer) MarkTransaction(hash [32]byte) {
 		p.knownTxs.Pop()
 	}
 	p.knownTxs.Add(hash)
+}
+
+// MarkBlock marks a block as known for the peer, ensuring that the block will
+// never be propagated to this particular peer.
+func (p *Peer) MarkBlock(hash [32]byte) {
+	// If we reached the memory allowance, drop a previously known block hash
+	for p.knownBlocks.Size() >= maxKnownBlocks {
+		p.knownBlocks.Pop()
+	}
+	p.knownBlocks.Add(hash)
 }

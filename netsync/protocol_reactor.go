@@ -1,25 +1,20 @@
 package netsync
 
 import (
-	"net/http"
 	"reflect"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 	cmn "github.com/tendermint/tmlibs/common"
 
-	"github.com/bytom/blockchain/accesstoken"
 	"github.com/bytom/blockchain/account"
-	"github.com/bytom/blockchain/asset"
-	"github.com/bytom/blockchain/pseudohsm"
-	"github.com/bytom/blockchain/txfeed"
-	"github.com/bytom/blockchain/wallet"
-	"github.com/bytom/encoding/json"
 	"github.com/bytom/mining/cpuminer"
 	"github.com/bytom/mining/miningpool"
+	"github.com/bytom/netsync/fetcher"
 	"github.com/bytom/p2p"
 	"github.com/bytom/p2p/trust"
 	"github.com/bytom/protocol"
+	"github.com/bytom/protocol/bc"
 	"github.com/bytom/protocol/bc/legacy"
 	"github.com/bytom/types"
 )
@@ -27,6 +22,7 @@ import (
 const (
 	// BlockchainChannel is a channel for blocks and status updates
 	BlockchainChannel = byte(0x40)
+	maxNewBlockChSize = int(1024)
 
 	defaultChannelCapacity      = 100
 	trySyncIntervalMS           = 100
@@ -63,93 +59,30 @@ func NewErrorResponse(err error) Response {
 type ProtocalReactor struct {
 	p2p.BaseReactor
 
-	chain         *protocol.Chain
-	wallet        *wallet.Wallet
-	accounts      *account.Manager
-	assets        *asset.Registry
-	accessTokens  *accesstoken.CredentialStore
-	txFeedTracker *txfeed.Tracker
-	blockKeeper   *blockKeeper
-	txPool        *protocol.TxPool
-	hsm           *pseudohsm.HSM
-	mining        *cpuminer.CPUMiner
-	miningPool    *miningpool.MiningPool
-	mux           *http.ServeMux
-	sw            *p2p.Switch
-	handler       http.Handler
-	evsw          types.EventSwitch
-	miningEnable  bool
-}
-
-func maxBytes(h http.Handler) http.Handler {
-	const maxReqSize = 1e7 // 10MB
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// A block can easily be bigger than maxReqSize, but everything
-		// else should be pretty small.
-		if req.URL.Path != crosscoreRPCPrefix+"signer/sign-block" {
-			req.Body = http.MaxBytesReader(w, req.Body, maxReqSize)
-		}
-		h.ServeHTTP(w, req)
-	})
-}
-
-// Used as a request object for api queries
-type requestQuery struct {
-	Filter       string        `json:"filter,omitempty"`
-	FilterParams []interface{} `json:"filter_params,omitempty"`
-	SumBy        []string      `json:"sum_by,omitempty"`
-	PageSize     int           `json:"page_size"`
-
-	// AscLongPoll and Timeout are used by /list-transactions
-	// to facilitate notifications.
-	AscLongPoll bool          `json:"ascending_with_long_poll,omitempty"`
-	Timeout     json.Duration `json:"timeout"`
-
-	// After is a completely opaque cursor, indicating that only
-	// items in the result set after the one identified by `After`
-	// should be included. It has no relationship to time.
-	After string `json:"after"`
-
-	// These two are used for time-range queries like /list-transactions
-	StartTimeMS uint64 `json:"start_time,omitempty"`
-	EndTimeMS   uint64 `json:"end_time,omitempty"`
-
-	// This is used for point-in-time queries like /list-balances
-	// TODO(bobg): Different request structs for endpoints with different needs
-	TimestampMS uint64 `json:"timestamp,omitempty"`
-
-	// This is used for filtering results from /list-access-tokens
-	// Value must be "client" or "network"
-	Type string `json:"type"`
-
-	// Aliases is used to filter results from /mockshm/list-keys
-	Aliases []string `json:"aliases,omitempty"`
-}
-
-// Used as a response object for api queries
-type page struct {
-	Items    interface{}  `json:"items"`
-	Next     requestQuery `json:"next"`
-	LastPage bool         `json:"last_page"`
-	After    string       `json:"after"`
+	chain        *protocol.Chain
+	blockKeeper  *blockKeeper
+	txPool       *protocol.TxPool
+	mining       *cpuminer.CPUMiner
+	miningPool   *miningpool.MiningPool
+	sw           *p2p.Switch
+	evsw         types.EventSwitch
+	miningEnable bool
+	fetcher      *fetcher.Fetcher
 }
 
 // NewProtocalReactor returns the reactor of whole blockchain.
-func NewProtocalReactor(chain *protocol.Chain, txPool *protocol.TxPool, accounts *account.Manager, sw *p2p.Switch, miningEnable bool) *ProtocalReactor {
+func NewProtocalReactor(chain *protocol.Chain, txPool *protocol.TxPool, accounts *account.Manager, sw *p2p.Switch, miningEnable bool, newBlockCh chan *bc.Hash, fetcher *fetcher.Fetcher) *ProtocalReactor {
 	pr := &ProtocalReactor{
-		chain: chain,
-		// wallet:        wallet,
-		// accounts:      accounts,
-		// assets:        assets,
-		blockKeeper: newBlockKeeper(chain, sw),
-		txPool:      txPool,
-		mining:      cpuminer.NewCPUMiner(chain, accounts, txPool),
-		miningPool:  miningpool.NewMiningPool(chain, accounts, txPool),
-		// mux:           http.NewServeMux(),
-		sw: sw,
-		// accessTokens:  accessTokens,
+		chain:        chain,
+		blockKeeper:  newBlockKeeper(chain, sw),
+		txPool:       txPool,
+		mining:       cpuminer.NewCPUMiner(chain, accounts, txPool, newBlockCh),
+		miningPool:   miningpool.NewMiningPool(chain, accounts, txPool, newBlockCh),
+		sw:           sw,
 		miningEnable: miningEnable,
+		fetcher:      fetcher,
 	}
+	//pr.fetcher = fetcher.New()
 	pr.BaseReactor = *p2p.NewBaseReactor("ProtocalReactor", pr)
 	return pr
 }
@@ -213,26 +146,26 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 
 	switch msg := msg.(type) {
 	case *BlockRequestMessage:
-		var block *legacy.Block
-		var err error
-		if msg.Height != 0 {
-			block, err = pr.chain.GetBlockByHeight(msg.Height)
-		} else {
-			block, err = pr.chain.GetBlockByHash(msg.GetHash())
-		}
-		if err != nil {
-			log.Errorf("Fail on BlockRequestMessage get block: %v", err)
-			return
-		}
-		response, err := NewBlockResponseMessage(block)
-		if err != nil {
-			log.Errorf("Fail on BlockRequestMessage create resoinse: %v", err)
-			return
-		}
-		src.TrySend(BlockchainChannel, struct{ BlockchainMessage }{response})
+		//var block *legacy.Block
+		//var err error
+		//if msg.Height != 0 {
+		//	block, err = pr.chain.GetBlockByHeight(msg.Height)
+		//} else {
+		//	block, err = pr.chain.GetBlockByHash(msg.GetHash())
+		//}
+		//if err != nil {
+		//	log.Errorf("Fail on BlockRequestMessage get block: %v", err)
+		//	return
+		//}
+		//response, err := NewBlockResponseMessage(block)
+		//if err != nil {
+		//	log.Errorf("Fail on BlockRequestMessage create resoinse: %v", err)
+		//	return
+		//}
+		//src.TrySend(BlockchainChannel, struct{ BlockchainMessage }{response})
 
 	case *BlockResponseMessage:
-		pr.blockKeeper.AddBlock(msg.GetBlock(), src)
+		//pr.blockKeeper.AddBlock(msg.GetBlock(), src)
 
 	case *StatusRequestMessage:
 		block := pr.chain.BestBlock()
@@ -247,6 +180,40 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		if err := pr.chain.ValidateTx(tx); err != nil {
 			pr.sw.AddScamPeer(src)
 		}
+
+	case *MineBlockMessage:
+		// Retrieve and decode the propagated block
+		//var request newBlockData
+		//if err := msg.Decode(&request); err != nil {
+		//	return errResp(ErrDecode, "%v: %v", msg, err)
+		//}
+		block := msg.GetMineBlock()
+		//request.Block.ReceivedAt = msg.ReceivedAt
+		//request.Block.ReceivedFrom = p
+
+		// Mark the peer as owning the block and schedule it for import
+		src.MarkBlock(block.Hash().Byte32())
+		pr.fetcher.Enqueue(src.Key, block)
+		hash := block.Hash()
+		pr.blockKeeper.SetPeerHeight(src.Key, block.Height, &hash)
+		// Assuming the block is importable by the peer, but possibly not yet done so,
+		// calculate the head hash and TD that the peer truly must have.
+		//var (
+		//	trueHead = request.Block.ParentHash()
+		//	trueTD   = new(big.Int).Sub(request.TD, request.Block.Difficulty())
+		//)
+		// Update the peers total difficulty if better than the previous
+		//if _, td := p.Head(); trueTD.Cmp(td) > 0 {
+		//	p.SetHead(trueHead, trueTD)
+		//
+		//	// Schedule a sync if above ours. Note, this will not fire a sync for a gap of
+		//	// a singe block (as the true TD is below the propagated block), however this
+		//	// scenario should easily be covered by the fetcher.
+		//	currentBlock := pm.blockchain.CurrentBlock()
+		//	if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())) > 0 {
+		//		go pm.synchronise(p)
+		//	}
+		//}
 
 	default:
 		log.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))

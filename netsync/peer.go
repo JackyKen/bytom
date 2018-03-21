@@ -14,8 +14,8 @@ import (
 const (
 	// BlockchainChannel is a channel for blocks and status updates
 	// BlockchainChannel = byte(0x40)
-	maxKnownTxs      = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
-	maxKnownBlocks   = 1024  // Maximum block hashes to keep in the known list (prevent DOS)
+	maxKnownTxs = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
+	//maxKnownBlocks   = 1024  // Maximum block hashes to keep in the known list (prevent DOS)
 	handshakeTimeout = 5 * time.Second
 )
 
@@ -58,8 +58,8 @@ func (p *peer) MarkTransaction(hash common.Hash) {
 // peerSet represents the collection of active peers currently participating in
 // the Ethereum sub-protocol.
 type peerSet struct {
-	peers  map[string]*peer
-	lock   sync.RWMutex
+	peers map[string]*peer
+	lock  sync.RWMutex
 	//closed bool
 }
 

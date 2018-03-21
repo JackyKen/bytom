@@ -123,3 +123,15 @@ func (ps *PeerSet) PeersWithoutTx(hash [32]byte) []*Peer {
 	}
 	return list
 }
+
+// PeersWithoutBlock retrieves a list of peers that do not have a given block in
+// their set of known hashes.
+func (ps *PeerSet) PeersWithoutBlock(hash [32]byte) []*Peer {
+	list := make([]*Peer, 0, ps.Size())
+	for _, p := range ps.List() {
+		if !p.knownBlocks.Has(hash) {
+			list = append(list, p)
+		}
+	}
+	return list
+}

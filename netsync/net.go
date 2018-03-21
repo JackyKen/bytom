@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	wire "github.com/tendermint/go-wire"
+	"github.com/tendermint/go-wire"
 
 	"github.com/bytom/protocol/bc"
 	"github.com/bytom/protocol/bc/legacy"
@@ -17,6 +17,7 @@ const (
 	StatusRequestByte  = byte(0x20)
 	StatusResponseByte = byte(0x21)
 	NewTransactionByte = byte(0x30)
+	NewMineBlockByte   = byte(0x40)
 )
 
 // BlockchainMessage is a generic message for this reactor.
@@ -29,6 +30,7 @@ var _ = wire.RegisterInterface(
 	wire.ConcreteType{&StatusRequestMessage{}, StatusRequestByte},
 	wire.ConcreteType{&StatusResponseMessage{}, StatusResponseByte},
 	wire.ConcreteType{&TransactionNotifyMessage{}, NewTransactionByte},
+	wire.ConcreteType{&MineBlockMessage{}, NewMineBlockByte},
 )
 
 func DecodeMessage(bz []byte) (msgType byte, msg BlockchainMessage, err error) {
@@ -128,4 +130,26 @@ func (m *StatusResponseMessage) GetHash() *bc.Hash {
 func (m *StatusResponseMessage) String() string {
 	hash := m.GetHash()
 	return fmt.Sprintf("StatusResponseMessage{Height: %d, Hash: %s}", m.Height, hash.String())
+}
+
+type MineBlockMessage struct {
+	RawBlock []byte
+}
+
+func NewMineBlockMessage(block *legacy.Block) (*MineBlockMessage, error) {
+	rawBlock, err := block.MarshalText()
+	if err != nil {
+		return nil, err
+	}
+	return &MineBlockMessage{RawBlock: rawBlock}, nil
+}
+
+func (m *MineBlockMessage) GetMineBlock() *legacy.Block {
+	block := &legacy.Block{}
+	block.UnmarshalText(m.RawBlock)
+	return block
+}
+
+func (m *MineBlockMessage) String() string {
+	return fmt.Sprintf("NewMineBlockMessage{Size: %d}", len(m.RawBlock))
 }
