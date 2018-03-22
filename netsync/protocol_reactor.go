@@ -176,7 +176,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 
 	case *TransactionNotifyMessage:
 		tx := msg.GetTransaction()
-		src.MarkTransaction(tx.ID.Byte32())
+		pr.blockKeeper.MarkTransaction(src.Key, tx.ID.Byte32())
 		if err := pr.chain.ValidateTx(tx); err != nil {
 			pr.sw.AddScamPeer(src)
 		}
@@ -192,7 +192,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		//request.Block.ReceivedFrom = p
 
 		// Mark the peer as owning the block and schedule it for import
-		src.MarkBlock(block.Hash().Byte32())
+		pr.blockKeeper.MarkBlock(src.Key, block.Hash().Byte32())
 		pr.fetcher.Enqueue(src.Key, block)
 		hash := block.Hash()
 		pr.blockKeeper.SetPeerHeight(src.Key, block.Height, &hash)

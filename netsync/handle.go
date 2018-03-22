@@ -3,8 +3,6 @@ package netsync
 import (
 	"strings"
 	"sync"
-	"time"
-
 	log "github.com/sirupsen/logrus"
 	dbm "github.com/tendermint/tmlibs/db"
 
@@ -22,7 +20,10 @@ import (
 	cmn "github.com/tendermint/tmlibs/common"
 )
 
-const forceSyncCycle = 10 * time.Hour // Time interval to force syncs, even if few peers are available
+const (
+	//forceSyncCycle      = 10 * time.Second // Time interval to force syncs, even if few peers are available
+	//minDesiredPeerCount = 5                // Amount of peers desired to start syncing
+)
 
 type SyncManager struct {
 	networkId uint64
@@ -39,9 +40,10 @@ type SyncManager struct {
 	maxPeers int
 	chain    *core.Chain
 	txPool   *core.TxPool
-	// downloader *downloader.Downloader
+	//downloader *downloader.Downloader
 	fetcher *fetcher.Fetcher
-	//peers *peerSet
+	peers *peerSet
+	blockKeeper  *blockKeeper
 
 	// SubProtocols []p2p.Protocol
 
@@ -79,7 +81,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 		//addrBook:   addrBook,
 		//newBlockCh: newBlockCh,
 		//fetcher:    fetcher,
-		//peers:       newPeerSet(),
+		peers:       newPeerSet(),
 		newPeerCh:   make(chan *peer),
 		noMorePeers: make(chan struct{}),
 		// txsyncCh:    make(chan *txsync),
@@ -111,7 +113,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	manager.sw = p2p.NewSwitch(config.P2P, trustHistoryDB)
 
 	protocolReactor := NewProtocalReactor(chain, txPool, accounts, manager.sw, config.Mining, manager.newBlockCh, manager.fetcher)
-
+	manager.blockKeeper=protocolReactor.blockKeeper
 	manager.sw.AddReactor("PROTOCOL", protocolReactor)
 	// Optionally, start the pex reactor
 	//var addrBook *p2p.AddrBook
@@ -239,44 +241,13 @@ func (self *SyncManager) minedBroadcastLoop() {
 	}
 }
 
-// syncer is responsible for periodically synchronising with the network, both
-// downloading hashes and blocks as well as handling the announcement handler.
-func (self *SyncManager) syncer() {
-	// Start and ensure cleanup of sync mechanisms
-	self.fetcher.Start()
-	//defer self.fetcher.Stop()
-	//defer pm.downloader.Terminate()
-
-	// Wait for different events to fire synchronisation operations
-	//forceSync := time.NewTicker(forceSyncCycle)
-	//defer forceSync.Stop()
-	//
-	//for {
-	//	select {
-	//	//case <-pm.newPeerCh:
-	//	//	// Make sure we have peers to select from, then sync
-	//	//	if pm.peers.Len() < minDesiredPeerCount {
-	//	//		break
-	//	//	}
-	//	//	go pm.synchronise(pm.peers.BestPeer())
-	//
-	//	case <-forceSync.C:
-	//		// Force a sync even if not enough peers are present
-	//		//go self.synchronise(pm.peers.BestPeer())
-	//		return
-	//		//case <-pm.noMorePeers:
-	//		//	return
-	//	}
-	//}
-}
-
 // BroadcastTransaction broadcats `BlockStore` transaction.
 func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
 	msg, err := NewTransactionNotifyMessage(tx)
 	if err != nil {
 		return err
 	}
-	peers := self.sw.Peers().PeersWithoutTx(tx.ID.Byte32())
+	peers := self.blockKeeper.PeersWithoutTx(tx.ID.Byte32())
 	self.sw.BroadcastX(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 	return nil
 }
@@ -285,7 +256,7 @@ func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
 // will only announce it's availability (depending what's requested).
 func (self *SyncManager) BroadcastMineBlock(block *legacy.Block) {
 	hash := block.Hash().Byte32()
-	peers := self.sw.Peers().PeersWithoutBlock(hash)
+	peers := self.blockKeeper.PeersWithoutBlock(hash)
 
 	msg, _ := NewMineBlockMessage(block)
 	//if err != nil {

@@ -11,6 +11,12 @@ import (
 	"github.com/bytom/protocol"
 	"github.com/bytom/protocol/bc"
 	"github.com/bytom/protocol/bc/legacy"
+	"gopkg.in/fatih/set.v0"
+)
+
+const (
+	maxKnownTxs    = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
+	maxKnownBlocks = 1024  // Maximum block hashes to keep in the known list (prevent DOS)
 )
 
 type BlockRequestMessage struct {
@@ -19,16 +25,25 @@ type BlockRequestMessage struct {
 }
 
 type blockKeeperPeer struct {
-	mtx    sync.RWMutex
-	height uint64
-	hash   *bc.Hash
+	mtx     sync.RWMutex
+	height  uint64
+	hash    *bc.Hash
+	peer    *p2p.Peer
+	version int // Protocol version negotiated
+
+	knownTxs    *set.Set // Set of transaction hashes known to be known by this peer
+	knownBlocks *set.Set // Set of block hashes known to be known by this peer
+
 }
 
 func newBlockKeeperPeer(height uint64, hash *bc.Hash) *blockKeeperPeer {
 	return &blockKeeperPeer{
-		height: height,
-		hash:   hash,
+		height:      height,
+		hash:        hash,
+		knownTxs:    set.New(),
+		knownBlocks: set.New(),
 	}
+
 }
 
 func (p *blockKeeperPeer) GetStatus() (height uint64, hash *bc.Hash) {
@@ -138,9 +153,16 @@ func (bk *blockKeeper) SetPeerHeight(peerID string, height uint64, hash *bc.Hash
 		peer.SetStatus(height, hash)
 		return
 	}
-	peer := newBlockKeeperPeer(height, hash)
-	bk.peers[peerID] = peer
-	log.WithFields(log.Fields{"ID": peerID, "Height": height}).Info("Add new peer to blockKeeper")
+	if peer := bk.peers[peerID]; peer == nil {
+		peer := newBlockKeeperPeer(height, hash)
+		bk.peers[peerID] = peer
+		bk.MarkBlock(peerID, hash.Byte32())
+		log.WithFields(log.Fields{"ID": peerID, "Height": height}).Info("Add new peer to blockKeeper")
+		return
+	}
+	bk.peers[peerID].height = height
+	bk.peers[peerID].hash = hash
+	bk.MarkBlock(peerID, hash.Byte32())
 }
 
 func (bk *blockKeeper) RequestBlockByHeight(height uint64) {
@@ -215,4 +237,66 @@ func (bk *blockKeeper) blockProcessWorker() {
 			bk.requestBlockByHash(pendingResponse.src.Key, &block.PreviousBlockHash)
 		}
 	}
+}
+
+// BestPeer retrieves the known peer with the currently highest total difficulty.
+func (bk *blockKeeper) BestPeer() *p2p.Peer {
+	bk.mtx.RLock()
+	defer bk.mtx.RUnlock()
+
+	var (
+		bestPeer   *p2p.Peer
+		bestHeight uint64
+	)
+
+	for _, p := range bk.peers {
+		if bestPeer == nil || p.height > bestHeight {
+			bestPeer, bestHeight = p.peer, p.height
+		}
+	}
+	return bestPeer
+}
+
+// MarkTransaction marks a transaction as known for the peer, ensuring that it
+// will never be propagated to this particular peer.
+func (bk *blockKeeper) MarkTransaction(peer string, hash [32]byte) {
+	// If we reached the memory allowance, drop a previously known transaction hash
+	for bk.peers[peer].knownTxs.Size() >= maxKnownTxs {
+		bk.peers[peer].knownTxs.Pop()
+	}
+	bk.peers[peer].knownTxs.Add(hash)
+}
+
+// MarkBlock marks a block as known for the peer, ensuring that the block will
+// never be propagated to this particular peer.
+func (bk *blockKeeper) MarkBlock(peer string, hash [32]byte) {
+	// If we reached the memory allowance, drop a previously known block hash
+	for bk.peers[peer].knownBlocks.Size() >= maxKnownBlocks {
+		bk.peers[peer].knownBlocks.Pop()
+	}
+	bk.peers[peer].knownBlocks.Add(hash)
+}
+
+// PeersWithoutTx retrieves a list of peers that do not have a given transaction
+// in their set of known hashes.
+func (bk *blockKeeper) PeersWithoutTx(hash [32]byte) []*p2p.Peer {
+	list := make([]*p2p.Peer, 0, len(bk.peers))
+	for _, p := range bk.peers {
+		if !p.knownTxs.Has(hash) {
+			list = append(list, p.peer)
+		}
+	}
+	return list
+}
+
+// PeersWithoutBlock retrieves a list of peers that do not have a given block in
+// their set of known hashes.
+func (bk *blockKeeper) PeersWithoutBlock(hash [32]byte) []*p2p.Peer {
+	list := make([]*p2p.Peer, 0, len(bk.peers))
+	for _, p := range bk.peers {
+		if !p.knownBlocks.Has(hash) {
+			list = append(list, p.peer)
+		}
+	}
+	return list
 }

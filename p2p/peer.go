@@ -8,11 +8,9 @@ import (
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	crypto "github.com/tendermint/go-crypto"
-	wire "github.com/tendermint/go-wire"
+	"github.com/tendermint/go-crypto"
+	"github.com/tendermint/go-wire"
 	cmn "github.com/tendermint/tmlibs/common"
-	"gopkg.in/fatih/set.v0"
-
 	cfg "github.com/bytom/config"
 )
 
@@ -41,8 +39,8 @@ type Peer struct {
 	Key  string
 	Data *cmn.CMap // User data.
 
-	knownTxs    *set.Set // Set of transaction hashes known to be known by this peer
-	knownBlocks *set.Set // Set of block hashes known to be known by this peer
+	//knownTxs    *set.Set // Set of transaction hashes known to be known by this peer
+	//knownBlocks *set.Set // Set of block hashes known to be known by this peer
 }
 
 // PeerConfig is a Peer configuration.
@@ -123,8 +121,6 @@ func newPeerFromConnAndConfig(rawConn net.Conn, outbound bool, reactorsByCh map[
 		conn:        conn,
 		config:      config,
 		Data:        cmn.NewCMap(),
-		knownTxs:    set.New(),
-		knownBlocks: set.New(),
 	}
 
 	p.mconn = createMConnection(conn, p, reactorsByCh, chDescs, onPeerError, config.MConfig)
@@ -320,22 +316,4 @@ func createMConnection(conn net.Conn, p *Peer, reactorsByCh map[byte]Reactor, ch
 	return NewMConnectionWithConfig(conn, chDescs, onReceive, onError, config)
 }
 
-// MarkTransaction marks a transaction as known for the peer, ensuring that it
-// will never be propagated to this particular peer.
-func (p *Peer) MarkTransaction(hash [32]byte) {
-	// If we reached the memory allowance, drop a previously known transaction hash
-	for p.knownTxs.Size() >= maxKnownTxs {
-		p.knownTxs.Pop()
-	}
-	p.knownTxs.Add(hash)
-}
 
-// MarkBlock marks a block as known for the peer, ensuring that the block will
-// never be propagated to this particular peer.
-func (p *Peer) MarkBlock(hash [32]byte) {
-	// If we reached the memory allowance, drop a previously known block hash
-	for p.knownBlocks.Size() >= maxKnownBlocks {
-		p.knownBlocks.Pop()
-	}
-	p.knownBlocks.Add(hash)
-}
