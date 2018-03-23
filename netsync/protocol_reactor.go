@@ -1,11 +1,9 @@
 package netsync
 
 import (
-	"reflect"
-	"time"
-
 	log "github.com/sirupsen/logrus"
 	cmn "github.com/tendermint/tmlibs/common"
+	"reflect"
 
 	"github.com/bytom/blockchain/account"
 	"github.com/bytom/mining/cpuminer"
@@ -94,7 +92,7 @@ func (pr *ProtocalReactor) OnStart() error {
 	if pr.miningEnable {
 		pr.mining.Start()
 	}
-	go pr.syncRoutine()
+	//go pr.syncRoutine()
 	return nil
 }
 
@@ -120,6 +118,7 @@ func (pr *ProtocalReactor) GetChannels() []*p2p.ChannelDescriptor {
 
 // AddPeer implements Reactor by sending our state to peer.
 func (pr *ProtocalReactor) AddPeer(peer *p2p.Peer) {
+	pr.blockKeeper.AddPeer(peer)
 	peer.Send(BlockchainChannel, struct{ BlockchainMessage }{&StatusRequestMessage{}})
 }
 
@@ -146,26 +145,26 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 
 	switch msg := msg.(type) {
 	case *BlockRequestMessage:
-		//var block *legacy.Block
-		//var err error
-		//if msg.Height != 0 {
-		//	block, err = pr.chain.GetBlockByHeight(msg.Height)
-		//} else {
-		//	block, err = pr.chain.GetBlockByHash(msg.GetHash())
-		//}
-		//if err != nil {
-		//	log.Errorf("Fail on BlockRequestMessage get block: %v", err)
-		//	return
-		//}
-		//response, err := NewBlockResponseMessage(block)
-		//if err != nil {
-		//	log.Errorf("Fail on BlockRequestMessage create resoinse: %v", err)
-		//	return
-		//}
-		//src.TrySend(BlockchainChannel, struct{ BlockchainMessage }{response})
+		var block *legacy.Block
+		var err error
+		if msg.Height != 0 {
+			block, err = pr.chain.GetBlockByHeight(msg.Height)
+		} else {
+			block, err = pr.chain.GetBlockByHash(msg.GetHash())
+		}
+		if err != nil {
+			log.Errorf("Fail on BlockRequestMessage get block: %v", err)
+			return
+		}
+		response, err := NewBlockResponseMessage(block)
+		if err != nil {
+			log.Errorf("Fail on BlockRequestMessage create resoinse: %v", err)
+			return
+		}
+		src.TrySend(BlockchainChannel, struct{ BlockchainMessage }{response})
 
 	case *BlockResponseMessage:
-		//pr.blockKeeper.AddBlock(msg.GetBlock(), src)
+		pr.blockKeeper.AddBlock(msg.GetBlock(), src)
 
 	case *StatusRequestMessage:
 		block := pr.chain.BestBlock()
@@ -223,27 +222,27 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 // Handle messages from the poolReactor telling the reactor what to do.
 // NOTE: Don't sleep in the FOR_LOOP or otherwise slow it down!
 // (Except for the SYNC_LOOP, which is the primary purpose and must be synchronous.)
-func (pr *ProtocalReactor) syncRoutine() {
-	statusUpdateTicker := time.NewTicker(statusUpdateIntervalSeconds * time.Second)
-
-	for {
-		select {
-		case _ = <-statusUpdateTicker.C:
-			go pr.BroadcastStatusResponse()
-
-			if pr.miningEnable {
-				// mining if and only if block sync is finished
-				if pr.blockKeeper.IsCaughtUp() {
-					pr.mining.Start()
-				} else {
-					pr.mining.Stop()
-				}
-			}
-		case <-pr.Quit:
-			return
-		}
-	}
-}
+//func (pr *ProtocalReactor) syncRoutine() {
+//	statusUpdateTicker := time.NewTicker(statusUpdateIntervalSeconds * time.Second)
+//
+//	for {
+//		select {
+//		case _ = <-statusUpdateTicker.C:
+//			go pr.BroadcastStatusResponse()
+//
+//			if pr.miningEnable {
+//				// mining if and only if block sync is finished
+//				if pr.blockKeeper.IsCaughtUp() {
+//					pr.mining.Start()
+//				} else {
+//					pr.mining.Stop()
+//				}
+//			}
+//		case <-pr.Quit:
+//			return
+//		}
+//	}
+//}
 
 // BroadcastStatusResponse broadcasts `BlockStore` height.
 func (pr *ProtocalReactor) BroadcastStatusResponse() {

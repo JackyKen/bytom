@@ -95,7 +95,7 @@ func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
 		pendingProcessCh: make(chan *pendingResponse),
 	}
 	go bk.blockProcessWorker()
-	//go bk.blockRequestWorker()
+	go bk.blockRequestWorker()
 	return bk
 }
 
@@ -118,6 +118,20 @@ func (bk *blockKeeper) RemovePeer(peerID string) {
 	delete(bk.peers, peerID)
 	bk.mtx.Unlock()
 	log.WithField("ID", peerID).Info("Delete peer from blockKeeper")
+}
+
+func (bk *blockKeeper) AddPeer(peer *p2p.Peer) {
+	bk.mtx.Lock()
+	defer bk.mtx.Unlock()
+
+	if tmp := bk.peers[peer.Key]; tmp == nil {
+		keeperPeer := newBlockKeeperPeer(0, nil)
+		bk.peers[peer.Key] = keeperPeer
+		bk.peers[peer.Key].peer = peer
+		log.WithFields(log.Fields{"ID": peer.Key}).Info("Add new peer to blockKeeper")
+		return
+	}
+	log.WithField("ID", peer.Key).Info("Add peer to blockKeeper")
 }
 
 func (bk *blockKeeper) requestBlockByHash(peerID string, hash *bc.Hash) error {
@@ -153,16 +167,17 @@ func (bk *blockKeeper) SetPeerHeight(peerID string, height uint64, hash *bc.Hash
 		peer.SetStatus(height, hash)
 		return
 	}
-	if peer := bk.peers[peerID]; peer == nil {
-		peer := newBlockKeeperPeer(height, hash)
-		bk.peers[peerID] = peer
-		bk.MarkBlock(peerID, hash.Byte32())
-		log.WithFields(log.Fields{"ID": peerID, "Height": height}).Info("Add new peer to blockKeeper")
-		return
-	}
-	bk.peers[peerID].height = height
-	bk.peers[peerID].hash = hash
-	bk.MarkBlock(peerID, hash.Byte32())
+
+	//if peer := bk.peers[peerID]; peer == nil {
+	//	peer := newBlockKeeperPeer(height, hash)
+	//	bk.peers[peerID] = peer
+	//	bk.MarkBlock(peerID, hash.Byte32())
+	//	log.WithFields(log.Fields{"ID": peerID, "Height": height}).Info("Add new peer to blockKeeper")
+	//	return
+	//}
+	//bk.peers[peerID].height = height
+	//bk.peers[peerID].hash = hash
+	//bk.MarkBlock(peerID, hash.Byte32())
 }
 
 func (bk *blockKeeper) RequestBlockByHeight(height uint64) {
