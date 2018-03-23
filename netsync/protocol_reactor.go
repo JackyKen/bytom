@@ -22,7 +22,7 @@ const (
 	BlockchainChannel = byte(0x40)
 	maxNewBlockChSize = int(1024)
 
-	maxBlockchainResponseSize   = 22020096 + 2
+	maxBlockchainResponseSize = 22020096 + 2
 )
 
 const (
@@ -78,6 +78,17 @@ func NewProtocalReactor(chain *protocol.Chain, txPool *protocol.TxPool, accounts
 	}
 	pr.BaseReactor = *p2p.NewBaseReactor("ProtocalReactor", pr)
 	return pr
+}
+
+// GetChannels implements Reactor
+func (pr *ProtocalReactor) GetChannels() []*p2p.ChannelDescriptor {
+	return []*p2p.ChannelDescriptor{
+		&p2p.ChannelDescriptor{
+			ID:                BlockchainChannel,
+			Priority:          5,
+			SendQueueCapacity: 100,
+		},
+	}
 }
 
 // OnStart implements BaseService
