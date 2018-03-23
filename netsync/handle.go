@@ -20,45 +20,25 @@ import (
 	cmn "github.com/tendermint/tmlibs/common"
 )
 
-const (
-	//forceSyncCycle      = 10 * time.Second // Time interval to force syncs, even if few peers are available
-	//minDesiredPeerCount = 5                // Amount of peers desired to start syncing
-)
-
 type SyncManager struct {
 	networkId uint64
 	sw        *p2p.Switch
 	addrBook  *p2p.AddrBook // known peers
 
-	// fastSync  uint32 // Flag whether fast sync is enabled (gets disabled if we already have blocks)
-	// acceptTxs uint32 // Flag whether we're considered synchronised (enables transaction processing)
-	// txpool  *protocol.TxPool
+
 	privKey crypto.PrivKeyEd25519 // local node's p2p key
-	// txpool      txPool
-	// blockchain  *core.BlockChain
-	// chainconfig *params.ChainConfig
 	maxPeers int
 	chain    *core.Chain
 	txPool   *core.TxPool
-	//downloader *downloader.Downloader
 	fetcher *fetcher.Fetcher
-	peers *peerSet
 	blockKeeper  *blockKeeper
 
-	// SubProtocols []p2p.Protocol
-
-	// eventMux      *event.TypeMux
-	// txCh          chan core.TxPreEvent
-	// txSub         event.Subscription
-	// minedBlockSub *event.TypeMuxSubscription
 	newBlockCh chan *bc.Hash
-
-	// channels for fetcher, syncer, txsyncLoop
-	newPeerCh chan *peer
-	// txsyncCh    chan *txsync
+	newPeerCh chan struct{}
 	quitSync    chan struct{}
 	noMorePeers chan struct{}
 	config      *cfg.Config
+
 	// wait group is used for graceful shutdowns during downloading
 	// and processing
 	wg sync.WaitGroup
@@ -70,37 +50,21 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	// privKey := crypto.GenPrivKeyEd25519()
 	// Create the protocol manager with the base fields
 	manager := &SyncManager{
-		// networkId: networkId,
-		// eventMux:    mux,
 		txPool: txPool,
 		chain:  chain,
-		// chainconfig: config,
 		privKey: crypto.GenPrivKeyEd25519(),
 		config:  config,
-		//sw:         sw,
-		//addrBook:   addrBook,
-		//newBlockCh: newBlockCh,
-		//fetcher:    fetcher,
-		peers:       newPeerSet(),
-		newPeerCh:   make(chan *peer),
+		newPeerCh:   make(chan struct{}),
 		noMorePeers: make(chan struct{}),
-		// txsyncCh:    make(chan *txsync),
 		quitSync: make(chan struct{}),
 	}
 
-	//validator := func(header *types.Header) error {
-	//	return engine.VerifyHeader(blockchain, header, true)
-	//}
+
 	heighter := func() uint64 {
 		return chain.Height()
 	}
 	inserter := func(block *legacy.Block) (bool, error) {
-		//// If fast sync is running, deny importing weird blocks
-		//if atomic.LoadUint32(&manager.fastSync) == 1 {
-		//	log.Warn("Discarded bad propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-		//	return 0, nil
-		//}
-		//atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
+
 		return manager.chain.ProcessBlock(block)
 	}
 
@@ -155,7 +119,6 @@ func (self *SyncManager) makeNodeInfo() *p2p.NodeInfo {
 	p2pListener := self.sw.Listeners()[0]
 	p2pHost := p2pListener.ExternalAddress().IP.String()
 	p2pPort := p2pListener.ExternalAddress().Port
-	//rpcListenAddr := n.config.RPC.ListenAddress
 
 	// We assume that the rpcListener has the same ExternalAddress.
 	// This is probably true because both P2P and RPC listeners use UPnP,
@@ -197,16 +160,15 @@ func (self *SyncManager) Start(maxPeers int) {
 	self.maxPeers = maxPeers
 	self.netStart()
 	// broadcast transactions
-	// self.txCh = make(chan core.TxPreEvent, txChanSize)
-	// self.txSub = self.txpool.SubscribeTxPreEvent(self.txCh)
 	go self.txBroadcastLoop()
 
-	// // broadcast mined blocks
-	// self.minedBlockSub = self.eventMux.Subscribe(core.NewMinedBlockEvent{})
+	// broadcast mined blocks
 	go self.minedBroadcastLoop()
 
-	// // start sync handlers
+	// start sync handlers
 	go self.syncer()
+
+	//TODO:
 	// go self.txsyncLoop()
 }
 
@@ -228,12 +190,10 @@ func (self *SyncManager) minedBroadcastLoop() {
 	for {
 		select {
 		case blockHash := <-self.newBlockCh:
-			//fmt.Println(blockHash)
 			block, err := self.chain.GetBlockByHash(blockHash)
 			if err != nil {
 				log.Errorf("Error get block from newBlockCh %v", err)
 			}
-			//log.WithFields(log.Fields{"Hash": blockHash, "height": block.Height}).Info("Boardcast my new block")
 			self.BroadcastMineBlock(block)
 		case <-self.quitSync:
 			return
@@ -252,46 +212,15 @@ func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
 	return nil
 }
 
-// BroadcastBlock will either propagate a block to a subset of it's peers, or
-// will only announce it's availability (depending what's requested).
+// BroadcastBlock will  propagate a block to it's peers.
 func (self *SyncManager) BroadcastMineBlock(block *legacy.Block) {
 	hash := block.Hash().Byte32()
 	peers := self.blockKeeper.PeersWithoutBlock(hash)
 
 	msg, _ := NewMineBlockMessage(block)
-	//if err != nil {
-	//	return err
-	//}
-	// If propagation is requested, send to a subset of the peer
-	//if propagate {
-	// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
-	//var td *big.Int
-	//if parent := pm.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
-	//	td = new(big.Int).Add(block.Difficulty(), pm.blockchain.GetTd(block.ParentHash(), block.NumberU64()-1))
-	//} else {
-	//	log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
-	//	return
-	//}
-	// Send the block to a subset of our peers
-	//transfer := peers[:int(math.Sqrt(float64(len(peers))))]
+
 	self.sw.BroadcastX(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 
-	//for _, peer := range transfer {
-	//		peer.SendNewBlock(block, td)
-	//	}
-
-	//log.WithFields(log.Fields{"Hash": block.Hash().String(), "height": block.Height}).Info("Boardcast my new block")
-
-	//log.Trace("Propagated block", "hash", hash, "recipients", len(transfer), "duration", common.PrettyDuration(time.Since(block.ReceivedAt)))
-	//return nil
-	//}
-	//// Otherwise if the block is indeed in out own chain, announce it
-	//if pm.blockchain.HasBlock(hash, block.NumberU64()) {
-	//	for _, peer := range peers {
-	//		peer.SendNewBlockHashes([]common.Hash{hash}, []uint64{block.NumberU64()})
-	//	}
-	//	log.Trace("Announced block", "hash", hash, "recipients", len(peers), "duration", common.PrettyDuration(time.Since(block.ReceivedAt)))
-	//}
 }
 
 func (self *SyncManager) NodeInfo() *p2p.NodeInfo {

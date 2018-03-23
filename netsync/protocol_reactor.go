@@ -22,11 +22,7 @@ const (
 	BlockchainChannel = byte(0x40)
 	maxNewBlockChSize = int(1024)
 
-	defaultChannelCapacity      = 100
-	trySyncIntervalMS           = 100
-	statusUpdateIntervalSeconds = 10
 	maxBlockchainResponseSize   = 22020096 + 2
-	crosscoreRPCPrefix          = "/rpc/"
 )
 
 const (
@@ -80,7 +76,6 @@ func NewProtocalReactor(chain *protocol.Chain, txPool *protocol.TxPool, accounts
 		miningEnable: miningEnable,
 		fetcher:      fetcher,
 	}
-	//pr.fetcher = fetcher.New()
 	pr.BaseReactor = *p2p.NewBaseReactor("ProtocalReactor", pr)
 	return pr
 }
@@ -92,7 +87,6 @@ func (pr *ProtocalReactor) OnStart() error {
 	if pr.miningEnable {
 		pr.mining.Start()
 	}
-	//go pr.syncRoutine()
 	return nil
 }
 
@@ -103,17 +97,6 @@ func (pr *ProtocalReactor) OnStop() {
 		pr.mining.Stop()
 	}
 	pr.blockKeeper.Stop()
-}
-
-// GetChannels implements Reactor
-func (pr *ProtocalReactor) GetChannels() []*p2p.ChannelDescriptor {
-	return []*p2p.ChannelDescriptor{
-		&p2p.ChannelDescriptor{
-			ID:                BlockchainChannel,
-			Priority:          5,
-			SendQueueCapacity: 100,
-		},
-	}
 }
 
 // AddPeer implements Reactor by sending our state to peer.
@@ -181,68 +164,18 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		}
 
 	case *MineBlockMessage:
-		// Retrieve and decode the propagated block
-		//var request newBlockData
-		//if err := msg.Decode(&request); err != nil {
-		//	return errResp(ErrDecode, "%v: %v", msg, err)
-		//}
 		block := msg.GetMineBlock()
-		//request.Block.ReceivedAt = msg.ReceivedAt
-		//request.Block.ReceivedFrom = p
 
 		// Mark the peer as owning the block and schedule it for import
 		pr.blockKeeper.MarkBlock(src.Key, block.Hash().Byte32())
 		pr.fetcher.Enqueue(src.Key, block)
 		hash := block.Hash()
 		pr.blockKeeper.SetPeerHeight(src.Key, block.Height, &hash)
-		// Assuming the block is importable by the peer, but possibly not yet done so,
-		// calculate the head hash and TD that the peer truly must have.
-		//var (
-		//	trueHead = request.Block.ParentHash()
-		//	trueTD   = new(big.Int).Sub(request.TD, request.Block.Difficulty())
-		//)
-		// Update the peers total difficulty if better than the previous
-		//if _, td := p.Head(); trueTD.Cmp(td) > 0 {
-		//	p.SetHead(trueHead, trueTD)
-		//
-		//	// Schedule a sync if above ours. Note, this will not fire a sync for a gap of
-		//	// a singe block (as the true TD is below the propagated block), however this
-		//	// scenario should easily be covered by the fetcher.
-		//	currentBlock := pm.blockchain.CurrentBlock()
-		//	if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())) > 0 {
-		//		go pm.synchronise(p)
-		//	}
-		//}
 
 	default:
 		log.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
 	}
 }
-
-// Handle messages from the poolReactor telling the reactor what to do.
-// NOTE: Don't sleep in the FOR_LOOP or otherwise slow it down!
-// (Except for the SYNC_LOOP, which is the primary purpose and must be synchronous.)
-//func (pr *ProtocalReactor) syncRoutine() {
-//	statusUpdateTicker := time.NewTicker(statusUpdateIntervalSeconds * time.Second)
-//
-//	for {
-//		select {
-//		case _ = <-statusUpdateTicker.C:
-//			go pr.BroadcastStatusResponse()
-//
-//			if pr.miningEnable {
-//				// mining if and only if block sync is finished
-//				if pr.blockKeeper.IsCaughtUp() {
-//					pr.mining.Start()
-//				} else {
-//					pr.mining.Stop()
-//				}
-//			}
-//		case <-pr.Quit:
-//			return
-//		}
-//	}
-//}
 
 // BroadcastStatusResponse broadcasts `BlockStore` height.
 func (pr *ProtocalReactor) BroadcastStatusResponse() {
