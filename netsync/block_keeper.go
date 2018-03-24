@@ -69,7 +69,7 @@ type pendingResponse struct {
 type blockKeeper struct {
 	mtx           sync.RWMutex
 	chainHeight   uint64
-	maxPeerHeight uint64
+	//maxPeerHeight uint64
 	//chainUpdateCh <-chan struct{}
 	peerUpdateCh chan struct{}
 	done         chan bool
@@ -84,7 +84,7 @@ func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
 	chainHeight := chain.Height()
 	bk := &blockKeeper{
 		chainHeight:   chainHeight,
-		maxPeerHeight: uint64(0),
+		//maxPeerHeight: uint64(0),
 		//chainUpdateCh: chain.BlockWaiter(chainHeight + 1),
 		peerUpdateCh: make(chan struct{}, 1000),
 		done:         make(chan bool, 1),
@@ -110,7 +110,7 @@ func (bk *blockKeeper) AddBlock(block *legacy.Block, src *p2p.Peer) {
 func (bk *blockKeeper) IsCaughtUp() bool {
 	bk.mtx.RLock()
 	defer bk.mtx.RUnlock()
-	return bk.chainHeight >= bk.maxPeerHeight
+	return bk.chainHeight >= bk.bestHeight()
 }
 
 func (bk *blockKeeper) RemovePeer(peerID string) {
@@ -158,8 +158,8 @@ func (bk *blockKeeper) SetPeerHeight(peerID string, height uint64, hash *bc.Hash
 	bk.mtx.Lock()
 	defer bk.mtx.Unlock()
 
-	if height > bk.maxPeerHeight {
-		bk.maxPeerHeight = height
+	if height > bk.bestHeight() {
+		//bk.maxPeerHeight = height
 		bk.peerUpdateCh <- struct{}{}
 	}
 
@@ -210,7 +210,7 @@ func (bk *blockKeeper) blockRequestWorker() {
 				bk.chainHeight = chainHeight
 			}
 			//chainHeight := bk.chainHeight
-			maxPeerHeight := bk.maxPeerHeight
+			maxPeerHeight := bk.bestHeight()
 			bk.mtx.RUnlock()
 
 			for i := chainHeight + 1; i <= maxPeerHeight; i++ {
@@ -274,6 +274,20 @@ func (bk *blockKeeper) BestPeer() *p2p.Peer {
 		}
 	}
 	return bestPeer
+}
+
+// BestPeer retrieves the known peer with the currently highest total difficulty.
+func (bk *blockKeeper) bestHeight() uint64 {
+	var (
+		bestHeight uint64
+	)
+
+	for _, p := range bk.peers {
+		if  p.height > bestHeight {
+			bestHeight = p.height
+		}
+	}
+	return bestHeight
 }
 
 // MarkTransaction marks a transaction as known for the peer, ensuring that it

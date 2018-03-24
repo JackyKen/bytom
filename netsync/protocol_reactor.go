@@ -15,6 +15,7 @@ import (
 	"github.com/bytom/protocol/bc"
 	"github.com/bytom/protocol/bc/legacy"
 	"github.com/bytom/types"
+	"fmt"
 )
 
 const (
@@ -158,6 +159,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		src.TrySend(BlockchainChannel, struct{ BlockchainMessage }{response})
 
 	case *BlockResponseMessage:
+		fmt.Println("BlockResponseMessage height:", msg.GetBlock().Height)
 		pr.blockKeeper.AddBlock(msg.GetBlock(), src)
 
 	case *StatusRequestMessage:
@@ -181,7 +183,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		pr.blockKeeper.MarkBlock(src.Key, block.Hash().Byte32())
 		pr.fetcher.Enqueue(src.Key, block)
 		hash := block.Hash()
-		pr.blockKeeper.SetPeerHeight(src.Key, block.Height, &hash)
+		pr.blockKeeper.peers[src.Key].SetStatus(block.Height, &hash)  //SetPeerHeight(src.Key, block.Height, &hash)
 
 	default:
 		log.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
