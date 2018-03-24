@@ -70,9 +70,9 @@ type blockKeeper struct {
 	mtx           sync.RWMutex
 	chainHeight   uint64
 	maxPeerHeight uint64
-	chainUpdateCh <-chan struct{}
-	peerUpdateCh  chan struct{}
-	done          chan bool
+	//chainUpdateCh <-chan struct{}
+	peerUpdateCh chan struct{}
+	done         chan bool
 
 	chain            *protocol.Chain
 	sw               *p2p.Switch
@@ -85,9 +85,9 @@ func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
 	bk := &blockKeeper{
 		chainHeight:   chainHeight,
 		maxPeerHeight: uint64(0),
-		chainUpdateCh: chain.BlockWaiter(chainHeight + 1),
-		peerUpdateCh:  make(chan struct{}, 1000),
-		done:          make(chan bool, 1),
+		//chainUpdateCh: chain.BlockWaiter(chainHeight + 1),
+		peerUpdateCh: make(chan struct{}, 1000),
+		done:         make(chan bool, 1),
 
 		chain:            chain,
 		sw:               sw,
@@ -194,18 +194,22 @@ func (bk *blockKeeper) RequestBlockByHeight(height uint64) {
 func (bk *blockKeeper) blockRequestWorker() {
 	for {
 		select {
-		case <-bk.chainUpdateCh:
-			chainHeight := bk.chain.Height()
-			bk.mtx.Lock()
-			if bk.chainHeight < chainHeight {
-				bk.chainHeight = chainHeight
-			}
-			bk.chainUpdateCh = bk.chain.BlockWaiter(bk.chainHeight + 1)
-			bk.mtx.Unlock()
+		//case <-bk.chainUpdateCh:
+		//	chainHeight := bk.chain.Height()
+		//	bk.mtx.Lock()
+		//	if bk.chainHeight < chainHeight {
+		//		bk.chainHeight = chainHeight
+		//	}
+		//	bk.chainUpdateCh = bk.chain.BlockWaiter(bk.chainHeight + 1)
+		//	bk.mtx.Unlock()
 
 		case <-bk.peerUpdateCh:
 			bk.mtx.RLock()
-			chainHeight := bk.chainHeight
+			chainHeight := bk.chain.Height()
+			if bk.chainHeight < chainHeight {
+				bk.chainHeight = chainHeight
+			}
+			//chainHeight := bk.chainHeight
 			maxPeerHeight := bk.maxPeerHeight
 			bk.mtx.RUnlock()
 
