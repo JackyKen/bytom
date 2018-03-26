@@ -138,7 +138,7 @@ type MineBlockMessage struct {
 	RawBlock []byte
 }
 
-func NewMineBlockMessage(block *legacy.Block) (*MineBlockMessage, error) {
+func NewMinedBlockMessage(block *legacy.Block) (*MineBlockMessage, error) {
 	rawBlock, err := block.MarshalText()
 	if err != nil {
 		return nil, err
@@ -146,10 +146,12 @@ func NewMineBlockMessage(block *legacy.Block) (*MineBlockMessage, error) {
 	return &MineBlockMessage{RawBlock: rawBlock}, nil
 }
 
-func (m *MineBlockMessage) GetMineBlock() *legacy.Block {
+func (m *MineBlockMessage) GetMineBlock() (*legacy.Block, error) {
 	block := &legacy.Block{}
-	block.UnmarshalText(m.RawBlock)
-	return block
+	if err:=block.UnmarshalText(m.RawBlock);err!=nil{
+		return nil, err
+	}
+	return block, nil
 }
 
 func (m *MineBlockMessage) String() string {

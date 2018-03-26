@@ -170,9 +170,10 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		pr.blockKeeper.SetPeerHeight(src.Key, msg.Height, msg.GetHash())
 
 	case *TransactionNotifyMessage:
+		//TODO: test
 		tx, err := msg.GetTransaction()
 		if err != nil {
-			log.Errorf("Error decoding tx %v", err)
+			log.Errorf("Error decoding new tx %v", err)
 			return
 		}
 		pr.blockKeeper.MarkTransaction(src.Key, tx.ID.Byte32())
@@ -181,13 +182,16 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		}
 
 	case *MineBlockMessage:
-		block := msg.GetMineBlock()
-
+		block, err := msg.GetMineBlock()
+		if err != nil {
+			log.Errorf("Error decoding mined block %v", err)
+			return
+		}
 		// Mark the peer as owning the block and schedule it for import
 		pr.blockKeeper.MarkBlock(src.Key, block.Hash().Byte32())
 		pr.fetcher.Enqueue(src.Key, block)
 		hash := block.Hash()
-		pr.blockKeeper.peers[src.Key].SetStatus(block.Height, &hash) //SetPeerHeight(src.Key, block.Height, &hash)
+		pr.blockKeeper.peers[src.Key].SetStatus(block.Height, &hash)
 
 	default:
 		log.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))

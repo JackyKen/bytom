@@ -417,12 +417,12 @@ func (sw *Switch) Broadcast(chID byte, msg interface{}) chan bool {
 // trying to send for defaultSendTimeoutSeconds. Returns a channel
 // which receives success values for each attempted send (false if times out)
 // NOTE: Broadcast uses goroutines, so order of broadcast may not be preserved.
-func (sw *Switch) BroadcastPeers(chID byte, peers []*Peer, msg interface{}) chan bool {
+func (sw *Switch) BroadcastToPeers(chID byte, peers []*Peer, msg interface{}) chan bool {
 	successChan := make(chan bool, len(sw.peers.List()))
 	log.WithFields(log.Fields{
 		"chID": chID,
 		"msg":  msg,
-	}).Debug("BroadcastPeers")
+	}).Debug("BroadcastToPeers")
 
 	for _, peer := range peers {
 		if ok := sw.peers.lookup[peer.Key]; ok == nil {

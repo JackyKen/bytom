@@ -1,9 +1,9 @@
 package netsync
 
 import (
-	"strings"
 	log "github.com/sirupsen/logrus"
 	dbm "github.com/tendermint/tmlibs/db"
+	"strings"
 
 	"github.com/bytom/blockchain/account"
 	cfg "github.com/bytom/config"
@@ -24,19 +24,18 @@ type SyncManager struct {
 	sw        *p2p.Switch
 	addrBook  *p2p.AddrBook // known peers
 
-
-	privKey crypto.PrivKeyEd25519 // local node's p2p key
-	maxPeers int
-	chain    *core.Chain
-	txPool   *core.TxPool
-	fetcher *fetcher.Fetcher
-	blockKeeper  *blockKeeper
+	privKey     crypto.PrivKeyEd25519 // local node's p2p key
+	maxPeers    int
+	chain       *core.Chain
+	txPool      *core.TxPool
+	fetcher     *fetcher.Fetcher
+	blockKeeper *blockKeeper
 
 	newBlockCh chan *bc.Hash
-	newPeerCh chan struct{}
-	quitSync    chan struct{}
+	newPeerCh  chan struct{}
+	quitSync   chan struct{}
 	//noMorePeers chan struct{}
-	config      *cfg.Config
+	config *cfg.Config
 
 	// wait group is used for graceful shutdowns during downloading
 	// and processing
@@ -49,15 +48,14 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	// privKey := crypto.GenPrivKeyEd25519()
 	// Create the protocol manager with the base fields
 	manager := &SyncManager{
-		txPool: txPool,
-		chain:  chain,
-		privKey: crypto.GenPrivKeyEd25519(),
-		config:  config,
-		newPeerCh:   make(chan struct{}),
+		txPool:    txPool,
+		chain:     chain,
+		privKey:   crypto.GenPrivKeyEd25519(),
+		config:    config,
+		newPeerCh: make(chan struct{}),
 		//noMorePeers: make(chan struct{}),
 		quitSync: make(chan struct{}),
 	}
-
 
 	heighter := func() uint64 {
 		return chain.Height()
@@ -68,7 +66,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 		return manager.chain.ProcessBlock(block)
 	}
 
-	manager.fetcher = fetcher.New(chain.GetBlockByHash, manager.BroadcastMineBlock, heighter, inserter, manager.removePeer)
+	manager.fetcher = fetcher.New(chain.GetBlockByHash, manager.BroadcastMinedBlock, heighter, inserter, manager.removePeer)
 
 	manager.newBlockCh = make(chan *bc.Hash, maxNewBlockChSize)
 
@@ -77,7 +75,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	manager.sw = p2p.NewSwitch(config.P2P, trustHistoryDB)
 
 	protocolReactor := NewProtocalReactor(chain, txPool, accounts, manager.sw, config.Mining, manager.newBlockCh, manager.fetcher)
-	manager.blockKeeper=protocolReactor.blockKeeper
+	manager.blockKeeper = protocolReactor.blockKeeper
 	manager.sw.AddReactor("PROTOCOL", protocolReactor)
 	// Optionally, start the pex reactor
 	//var addrBook *p2p.AddrBook
@@ -197,9 +195,10 @@ func (self *SyncManager) minedBroadcastLoop() {
 		case blockHash := <-self.newBlockCh:
 			block, err := self.chain.GetBlockByHash(blockHash)
 			if err != nil {
-				log.Errorf("Error get block from newBlockCh %v", err)
+				log.Errorf("Failed on mined broadcast loop get block %v", err)
+				return
 			}
-			self.BroadcastMineBlock(block)
+			self.BroadcastMinedBlock(block)
 		case <-self.quitSync:
 			return
 		}
@@ -207,24 +206,26 @@ func (self *SyncManager) minedBroadcastLoop() {
 }
 
 // BroadcastTransaction broadcats `BlockStore` transaction.
-func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
+func (self *SyncManager) BroadcastTx(tx *legacy.Tx) {
 	msg, err := NewTransactionNotifyMessage(tx)
 	if err != nil {
-		return err
+		log.Errorf("Failed on broadcast tx %v", err)
+		return
 	}
 	peers := self.blockKeeper.PeersWithoutTx(tx.ID.Byte32())
-	self.sw.BroadcastPeers(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
-	return nil
+	self.sw.BroadcastToPeers(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 }
 
 // BroadcastBlock will  propagate a block to it's peers.
-func (self *SyncManager) BroadcastMineBlock(block *legacy.Block) {
-	hash := block.Hash().Byte32()
-	peers := self.blockKeeper.PeersWithoutBlock(hash)
+func (self *SyncManager) BroadcastMinedBlock(block *legacy.Block) {
+	peers := self.blockKeeper.PeersWithoutBlock(block.Hash().Byte32())
 
-	msg, _ := NewMineBlockMessage(block)
-
-	self.sw.BroadcastPeers(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
+	msg, err := NewMinedBlockMessage(block)
+	if err != nil {
+		log.Errorf("Failed on mined broadcast mined block %v", err)
+		return
+	}
+	self.sw.BroadcastToPeers(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 
 }
 
