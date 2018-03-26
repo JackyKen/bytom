@@ -255,7 +255,7 @@ func (n *Node) OnStart() error {
 
 func (n *Node) OnStop() {
 	n.BaseService.OnStop()
-
+	n.syncManager.Stop(20)
 	log.Info("Stopping Node")
 	// TODO: gracefully disconnect from peers.
 

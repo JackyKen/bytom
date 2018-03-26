@@ -2,7 +2,6 @@ package netsync
 
 import (
 	"strings"
-	"sync"
 	log "github.com/sirupsen/logrus"
 	dbm "github.com/tendermint/tmlibs/db"
 
@@ -36,12 +35,12 @@ type SyncManager struct {
 	newBlockCh chan *bc.Hash
 	newPeerCh chan struct{}
 	quitSync    chan struct{}
-	noMorePeers chan struct{}
+	//noMorePeers chan struct{}
 	config      *cfg.Config
 
 	// wait group is used for graceful shutdowns during downloading
 	// and processing
-	wg sync.WaitGroup
+	//wg sync.WaitGroup
 }
 
 // NewProtocolManager returns a new ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
@@ -55,7 +54,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 		privKey: crypto.GenPrivKeyEd25519(),
 		config:  config,
 		newPeerCh:   make(chan struct{}),
-		noMorePeers: make(chan struct{}),
+		//noMorePeers: make(chan struct{}),
 		quitSync: make(chan struct{}),
 	}
 
@@ -63,6 +62,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	heighter := func() uint64 {
 		return chain.Height()
 	}
+
 	inserter := func(block *legacy.Block) (bool, error) {
 
 		return manager.chain.ProcessBlock(block)
@@ -172,6 +172,11 @@ func (self *SyncManager) Start(maxPeers int) {
 	// go self.txsyncLoop()
 }
 
+func (self *SyncManager) Stop(maxPeers int) {
+	close(self.quitSync)
+	self.sw.Stop()
+}
+
 func (self *SyncManager) txBroadcastLoop() {
 	newTxCh := self.txPool.GetNewTxCh()
 
@@ -208,7 +213,7 @@ func (self *SyncManager) BroadcastTx(tx *legacy.Tx) error {
 		return err
 	}
 	peers := self.blockKeeper.PeersWithoutTx(tx.ID.Byte32())
-	self.sw.BroadcastX(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
+	self.sw.BroadcastPeers(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 	return nil
 }
 
@@ -219,7 +224,7 @@ func (self *SyncManager) BroadcastMineBlock(block *legacy.Block) {
 
 	msg, _ := NewMineBlockMessage(block)
 
-	self.sw.BroadcastX(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
+	self.sw.BroadcastPeers(BlockchainChannel, peers, struct{ BlockchainMessage }{msg})
 
 }
 
@@ -229,11 +234,6 @@ func (self *SyncManager) NodeInfo() *p2p.NodeInfo {
 
 func (self *SyncManager) DialSeeds(seeds []string) error {
 	return self.sw.DialSeeds(self.addrBook, seeds)
-}
-
-func (self *SyncManager) Stop(maxPeers int) {
-
-	self.sw.Stop()
 }
 
 // Add a Listener to accept inbound peer connections.

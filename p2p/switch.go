@@ -413,18 +413,22 @@ func (sw *Switch) Broadcast(chID byte, msg interface{}) chan bool {
 	return successChan
 }
 
-// Broadcast runs a go routine for each attempted send, which will block
+// BroadcastPeers runs a go routine for each attempted send, which will block
 // trying to send for defaultSendTimeoutSeconds. Returns a channel
 // which receives success values for each attempted send (false if times out)
 // NOTE: Broadcast uses goroutines, so order of broadcast may not be preserved.
-func (sw *Switch) BroadcastX(chID byte, peers []*Peer, msg interface{}) chan bool {
+func (sw *Switch) BroadcastPeers(chID byte, peers []*Peer, msg interface{}) chan bool {
 	successChan := make(chan bool, len(sw.peers.List()))
 	log.WithFields(log.Fields{
 		"chID": chID,
 		"msg":  msg,
-	}).Debug("Broadcast")
+	}).Debug("BroadcastPeers")
 
 	for _, peer := range peers {
+		if ok := sw.peers.lookup[peer.Key]; ok == nil {
+			continue
+		}
+
 		go func(peer *Peer) {
 			success := peer.Send(chID, msg)
 			successChan <- success

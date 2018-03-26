@@ -51,7 +51,7 @@ func (self *SyncManager) syncer() {
 			// Force a sync even if not enough peers are present
 			go self.synchronise(self.blockKeeper.BestPeer())
 
-		case <-self.noMorePeers:
+		case <-self.quitSync:
 			return
 		}
 	}
