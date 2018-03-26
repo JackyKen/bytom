@@ -94,10 +94,12 @@ func NewTransactionNotifyMessage(tx *legacy.Tx) (*TransactionNotifyMessage, erro
 	return &TransactionNotifyMessage{RawTx: rawTx}, nil
 }
 
-func (m *TransactionNotifyMessage) GetTransaction() *legacy.Tx {
+func (m *TransactionNotifyMessage) GetTransaction() (*legacy.Tx, error) {
 	tx := &legacy.Tx{}
-	tx.UnmarshalText(m.RawTx)
-	return tx
+	if err := tx.UnmarshalText(m.RawTx); err != nil {
+		return nil, err
+	}
+	return tx, nil
 }
 
 func (m *TransactionNotifyMessage) String() string {

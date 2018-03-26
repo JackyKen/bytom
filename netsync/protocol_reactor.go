@@ -5,6 +5,7 @@ import (
 	cmn "github.com/tendermint/tmlibs/common"
 	"reflect"
 
+	"fmt"
 	"github.com/bytom/blockchain/account"
 	"github.com/bytom/mining/cpuminer"
 	"github.com/bytom/mining/miningpool"
@@ -15,7 +16,6 @@ import (
 	"github.com/bytom/protocol/bc"
 	"github.com/bytom/protocol/bc/legacy"
 	"github.com/bytom/types"
-	"fmt"
 )
 
 const (
@@ -170,7 +170,11 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		pr.blockKeeper.SetPeerHeight(src.Key, msg.Height, msg.GetHash())
 
 	case *TransactionNotifyMessage:
-		tx := msg.GetTransaction()
+		tx, err := msg.GetTransaction()
+		if err != nil {
+			log.Errorf("Error decoding tx %v", err)
+			return
+		}
 		pr.blockKeeper.MarkTransaction(src.Key, tx.ID.Byte32())
 		if err := pr.chain.ValidateTx(tx); err != nil {
 			pr.sw.AddScamPeer(src)
@@ -183,7 +187,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 		pr.blockKeeper.MarkBlock(src.Key, block.Hash().Byte32())
 		pr.fetcher.Enqueue(src.Key, block)
 		hash := block.Hash()
-		pr.blockKeeper.peers[src.Key].SetStatus(block.Height, &hash)  //SetPeerHeight(src.Key, block.Height, &hash)
+		pr.blockKeeper.peers[src.Key].SetStatus(block.Height, &hash) //SetPeerHeight(src.Key, block.Height, &hash)
 
 	default:
 		log.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
