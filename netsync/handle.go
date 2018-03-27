@@ -36,6 +36,7 @@ type SyncManager struct {
 	quitSync   chan struct{}
 	//noMorePeers chan struct{}
 	config *cfg.Config
+	synchronising   int32
 
 	// wait group is used for graceful shutdowns during downloading
 	// and processing

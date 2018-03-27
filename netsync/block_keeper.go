@@ -17,6 +17,9 @@ import (
 const (
 	maxKnownTxs    = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
 	maxKnownBlocks = 1024  // Maximum block hashes to keep in the known list (prevent DOS)
+
+	syncTimeout        = 30 * time.Second
+	requestRetryTicker = 15 * time.Second
 )
 
 type BlockRequestMessage struct {
@@ -78,6 +81,7 @@ type blockKeeper struct {
 	sw               *p2p.Switch
 	peers            map[string]*blockKeeperPeer
 	pendingProcessCh chan *pendingResponse
+	quitSync         chan struct{}
 }
 
 func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
@@ -93,9 +97,10 @@ func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
 		sw:               sw,
 		peers:            make(map[string]*blockKeeperPeer),
 		pendingProcessCh: make(chan *pendingResponse),
+		quitSync:         make(chan struct{}),
 	}
 	go bk.blockProcessWorker()
-	go bk.blockRequestWorker()
+	//go bk.blockRequestWorker()
 	return bk
 }
 
@@ -118,6 +123,7 @@ func (bk *blockKeeper) RemovePeer(peerID string) {
 	delete(bk.peers, peerID)
 	bk.mtx.Unlock()
 	log.WithField("ID", peerID).Info("Delete peer from blockKeeper")
+	bk.quitSync <- struct{}{}
 }
 
 func (bk *blockKeeper) AddPeer(peer *p2p.Peer) {
@@ -144,11 +150,11 @@ func (bk *blockKeeper) requestBlockByHash(peerID string, hash *bc.Hash) error {
 	return nil
 }
 
-func (bk *blockKeeper) requestBlockByHeight(peerID string, height uint64) error {
-	peer := bk.sw.Peers().Get(peerID)
-	if peer == nil {
-		return errors.New("can't find peer in peer pool")
-	}
+func (bk *blockKeeper) requestBlockByHeight(peer *p2p.Peer, height uint64) error {
+	//peer := bk.sw.Peers().Get(peerID)
+	//if peer == nil {
+	//	return errors.New("can't find peer in peer pool")
+	//}
 	msg := &BlockRequestMessage{Height: height}
 	peer.TrySend(BlockchainChannel, struct{ BlockchainMessage }{msg})
 	return nil
@@ -164,57 +170,40 @@ func (bk *blockKeeper) SetPeerHeight(peerID string, height uint64, hash *bc.Hash
 	}
 }
 
-func (bk *blockKeeper) RequestBlockByHeight(height uint64) {
-	bk.mtx.RLock()
-	defer bk.mtx.RUnlock()
-
-	for peerID, peer := range bk.peers {
-		if peerHeight, _ := peer.GetStatus(); peerHeight > bk.chainHeight {
-			bk.requestBlockByHeight(peerID, height)
-		}
-	}
+func (bk *blockKeeper) RequestBlockByHeight(peer *p2p.Peer, height uint64) {
+	bk.requestBlockByHeight(peer, height)
 }
 
-func (bk *blockKeeper) blockRequestWorker() {
-	for {
-		select {
-		//case <-bk.chainUpdateCh:
-		//	chainHeight := bk.chain.Height()
-		//	bk.mtx.Lock()
-		//	if bk.chainHeight < chainHeight {
-		//		bk.chainHeight = chainHeight
-		//	}
-		//	bk.chainUpdateCh = bk.chain.BlockWaiter(bk.chainHeight + 1)
-		//	bk.mtx.Unlock()
+func (bk *blockKeeper) BlockRequestWorker(peer *p2p.Peer, maxPeerHeight uint64) {
+	bk.mtx.RLock()
+	chainHeight := bk.chain.Height()
+	if bk.chainHeight < chainHeight {
+		bk.chainHeight = chainHeight
+	}
+	//chainHeight := bk.chainHeight
+	//maxPeerHeight := bk.bestHeight()
+	bk.mtx.RUnlock()
 
-		case <-bk.peerUpdateCh:
-			bk.mtx.RLock()
-			chainHeight := bk.chain.Height()
-			if bk.chainHeight < chainHeight {
-				bk.chainHeight = chainHeight
+	for i := chainHeight + 1; i <= maxPeerHeight; i++ {
+		bk.RequestBlockByHeight(peer, i)
+		waiter := bk.chain.BlockWaiter(i)
+		retryTicker := time.Tick(requestRetryTicker)
+		syncWait := time.NewTimer(syncTimeout)
+
+	retryLoop:
+		for {
+			select {
+			case <-waiter:
+				break retryLoop
+			case <-retryTicker:
+				bk.RequestBlockByHeight(peer, i)
+			case <-syncWait.C:
+				log.Info("Request block timeout")
+				return
+			case <-bk.quitSync:
+				log.Info("Quite block sync")
+				return
 			}
-			//chainHeight := bk.chainHeight
-			maxPeerHeight := bk.bestHeight()
-			bk.mtx.RUnlock()
-
-			for i := chainHeight + 1; i <= maxPeerHeight; i++ {
-				bk.RequestBlockByHeight(i)
-				waiter := bk.chain.BlockWaiter(i)
-				retryTicker := time.Tick(15 * time.Second)
-
-			retryLoop:
-				for {
-					select {
-					case <-waiter:
-						break retryLoop
-					case <-retryTicker:
-						bk.RequestBlockByHeight(i)
-					}
-				}
-			}
-
-		case <-bk.done:
-			return
 		}
 	}
 }

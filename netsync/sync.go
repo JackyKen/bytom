@@ -17,9 +17,10 @@
 package netsync
 
 import (
-	"time"
 	"github.com/bytom/p2p"
 	log "github.com/sirupsen/logrus"
+	"time"
+	"sync/atomic"
 )
 
 const (
@@ -66,7 +67,15 @@ func (self *SyncManager) synchronise(peer *p2p.Peer) {
 		return
 	}
 
-	if self.blockKeeper.peers[peer.Key].height>self.chain.Height() {
-		self.blockKeeper.peerUpdateCh <- struct{}{}
+	if self.blockKeeper.peers[peer.Key].height > self.chain.Height() {
+		//self.blockKeeper.peerUpdateCh <- struct{}{}
+		// Make sure only one goroutine is ever allowed past this point at once
+		if !atomic.CompareAndSwapInt32(&self.synchronising, 0, 1) {
+			log.Info("Synchronising ...")
+			return
+		}
+		defer atomic.StoreInt32(&self.synchronising, 0)
+
+		self.blockKeeper.BlockRequestWorker(peer, self.blockKeeper.peers[peer.Key].height)
 	}
 }
