@@ -167,16 +167,16 @@ func (f *Fetcher) loop() {
 func (f *Fetcher) enqueue(peer string, block *legacy.Block) {
 	hash := block.Hash()
 
-	// Ensure the peer isn't DOSing us
-	count := f.queues[peer] + 1
-	if count > blockLimit {
-		log.Debug("Discarded propagated block, exceeded allowance", "peer", peer, "number", block.Height, "hash", hash, "limit", blockLimit)
-		//f.forgetHash(hash)
-		return
-	}
+	//// Ensure the peer isn't DOSing us
+	//count := f.queues[peer] + 1
+	//if count > blockLimit {
+	//	log.Info("Discarded propagated block, exceeded allowance", "peer", peer, "number", block.Height, "hash", hash, "limit", blockLimit)
+	//	//f.forgetHash(hash)
+	//	return
+	//}
 	// Discard any past or too distant blocks
 	if dist := int64(block.Height) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
-		log.Debug("Discarded propagated block, too far away", "peer", peer, "number", block.Height, "hash", hash, "distance", dist)
+		log.Info("Discarded propagated block, too far away", "peer", peer, "number", block.Height, "hash", hash, "distance", dist)
 		//f.forgetHash(hash)
 		return
 	}
@@ -186,7 +186,8 @@ func (f *Fetcher) enqueue(peer string, block *legacy.Block) {
 			origin: peer,
 			block:  block,
 		}
-		f.queues[peer] = count
+		//fmt.Println("block count:", count)
+		//f.queues[peer] = count
 		f.queued[hash] = op
 		f.queue.Push(op, -float32(block.Height))
 		log.Debug("Queued propagated block", "peer", peer, "number", block.Height, "hash", hash, "queued", f.queue.Size())

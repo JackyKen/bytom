@@ -19,6 +19,7 @@ package netsync
 import (
 	"time"
 	"github.com/bytom/p2p"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -40,7 +41,8 @@ func (self *SyncManager) syncer() {
 
 	for {
 		select {
-		case <-self.newPeerCh:
+		case <-*self.newPeerCh:
+			log.Info("New peer connected.")
 			// Make sure we have peers to select from, then sync
 			if self.sw.Peers().Size() < minDesiredPeerCount {
 				break

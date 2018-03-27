@@ -32,7 +32,7 @@ type SyncManager struct {
 	blockKeeper *blockKeeper
 
 	newBlockCh chan *bc.Hash
-	newPeerCh  chan struct{}
+	newPeerCh  *chan struct{}
 	quitSync   chan struct{}
 	//noMorePeers chan struct{}
 	config *cfg.Config
@@ -48,11 +48,11 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	// privKey := crypto.GenPrivKeyEd25519()
 	// Create the protocol manager with the base fields
 	manager := &SyncManager{
-		txPool:    txPool,
-		chain:     chain,
-		privKey:   crypto.GenPrivKeyEd25519(),
-		config:    config,
-		newPeerCh: make(chan struct{}),
+		txPool:  txPool,
+		chain:   chain,
+		privKey: crypto.GenPrivKeyEd25519(),
+		config:  config,
+		//newPeerCh: make(chan struct{}),
 		//noMorePeers: make(chan struct{}),
 		quitSync: make(chan struct{}),
 	}
@@ -77,6 +77,7 @@ func NewSyncManager(config *cfg.Config, chain *protocol.Chain, txPool *protocol.
 	protocolReactor := NewProtocalReactor(chain, txPool, accounts, manager.sw, config.Mining, manager.newBlockCh, manager.fetcher)
 	manager.blockKeeper = protocolReactor.blockKeeper
 	manager.sw.AddReactor("PROTOCOL", protocolReactor)
+	manager.newPeerCh = protocolReactor.GetNewPeerChan()
 	// Optionally, start the pex reactor
 	//var addrBook *p2p.AddrBook
 	if config.P2P.PexReactor {

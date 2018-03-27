@@ -67,8 +67,8 @@ type pendingResponse struct {
 
 //TODO: add retry mechanism
 type blockKeeper struct {
-	mtx           sync.RWMutex
-	chainHeight   uint64
+	mtx         sync.RWMutex
+	chainHeight uint64
 	//maxPeerHeight uint64
 	//chainUpdateCh <-chan struct{}
 	peerUpdateCh chan struct{}
@@ -83,7 +83,7 @@ type blockKeeper struct {
 func newBlockKeeper(chain *protocol.Chain, sw *p2p.Switch) *blockKeeper {
 	chainHeight := chain.Height()
 	bk := &blockKeeper{
-		chainHeight:   chainHeight,
+		chainHeight: chainHeight,
 		//maxPeerHeight: uint64(0),
 		//chainUpdateCh: chain.BlockWaiter(chainHeight + 1),
 		peerUpdateCh: make(chan struct{}, 1000),
@@ -158,26 +158,10 @@ func (bk *blockKeeper) SetPeerHeight(peerID string, height uint64, hash *bc.Hash
 	bk.mtx.Lock()
 	defer bk.mtx.Unlock()
 
-	if height > bk.bestHeight() {
-		//bk.maxPeerHeight = height
-		bk.peerUpdateCh <- struct{}{}
-	}
-
 	if peer, ok := bk.peers[peerID]; ok {
 		peer.SetStatus(height, hash)
 		return
 	}
-
-	//if peer := bk.peers[peerID]; peer == nil {
-	//	peer := newBlockKeeperPeer(height, hash)
-	//	bk.peers[peerID] = peer
-	//	bk.MarkBlock(peerID, hash.Byte32())
-	//	log.WithFields(log.Fields{"ID": peerID, "Height": height}).Info("Add new peer to blockKeeper")
-	//	return
-	//}
-	//bk.peers[peerID].height = height
-	//bk.peers[peerID].hash = hash
-	//bk.MarkBlock(peerID, hash.Byte32())
 }
 
 func (bk *blockKeeper) RequestBlockByHeight(height uint64) {
@@ -283,7 +267,7 @@ func (bk *blockKeeper) bestHeight() uint64 {
 	)
 
 	for _, p := range bk.peers {
-		if  p.height > bestHeight {
+		if p.height > bestHeight {
 			bestHeight = p.height
 		}
 	}

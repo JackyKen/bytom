@@ -63,6 +63,8 @@ type ProtocalReactor struct {
 	evsw         types.EventSwitch
 	miningEnable bool
 	fetcher      *fetcher.Fetcher
+
+	newPeerCh chan struct{}
 }
 
 // NewProtocalReactor returns the reactor of whole blockchain.
@@ -76,6 +78,7 @@ func NewProtocalReactor(chain *protocol.Chain, txPool *protocol.TxPool, accounts
 		sw:           sw,
 		miningEnable: miningEnable,
 		fetcher:      fetcher,
+		newPeerCh:    make(chan struct{}),
 	}
 	pr.BaseReactor = *p2p.NewBaseReactor("ProtocalReactor", pr)
 	return pr
@@ -90,6 +93,11 @@ func (pr *ProtocalReactor) GetChannels() []*p2p.ChannelDescriptor {
 			SendQueueCapacity: 100,
 		},
 	}
+}
+
+// GetChannels implements Reactor
+func (pr *ProtocalReactor) GetNewPeerChan() *chan struct{} {
+	return &pr.newPeerCh
 }
 
 // OnStart implements BaseService
@@ -168,6 +176,7 @@ func (pr *ProtocalReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte) {
 
 	case *StatusResponseMessage:
 		pr.blockKeeper.SetPeerHeight(src.Key, msg.Height, msg.GetHash())
+		pr.newPeerCh <- struct{}{}
 
 	case *TransactionNotifyMessage:
 		//TODO: test
